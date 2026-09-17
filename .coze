@@ -1,0 +1,20 @@
+[project]
+project_id = "7685968624401596426"
+app_id = "7686018718274715657"
+project_name = "modbus-slave"
+project_type = "web"
+requires = [ "nodejs-24" ]
+template = "nextjs"
+version = "0.0.32"
+appliedPatches = [ "nextjs/replace-npx-with-pnpm@0.0.13" ]
+
+[dev]
+build = [ "bash", "./scripts/prepare.sh" ]
+run = [ "bash", "./scripts/dev.sh" ]
+validate = [ "bash", "./scripts/validate.sh" ]
+deps = [ "git" ]
+
+[deploy]
+build = [ "bash", "./scripts/build.sh" ]
+run = [ "bash", "./scripts/start.sh" ]
+deps = [ "git" ]

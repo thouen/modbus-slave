@@ -24,7 +24,8 @@ const eslintConfig = defineConfig([
   ...nextTs,
   {
     rules: {
-      'import/no-cycle': ['error', { ignoreExternal: true }],
+      // 注意：此处曾声明 import/no-cycle，但 eslint-plugin-import 并未安装，
+      // 该规则从未真正生效，且会让 lint 在遇到未被 next 配置覆盖的文件时直接报错退出。
       'react-hooks/set-state-in-effect': 'off',
       'no-restricted-syntax': ['error', ...syntaxRules],
       '@typescript-eslint/no-unused-vars': 'warn',

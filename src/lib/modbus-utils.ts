@@ -244,7 +244,7 @@ export function getFormatRegisterCount(format: DataDisplayFormat): number {
  * Generate a random ID string
  */
 export function generateId(): string {
-  return Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+  return crypto.randomUUID();
 }
 
 /**

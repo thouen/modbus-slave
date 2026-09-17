@@ -43,8 +43,13 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 - `ui/` — shadcn/ui base components
 
 ### Server (src/)
-- `server.ts` — Custom Next.js server with WebSocket upgrade
-- `ws-handlers/slave.ts` — WebSocket message routing for slave operations
+- `server.ts` — Custom Next.js server with WebSocket upgrade (**生产也必须用它启动**，否则 `/ws/slave` 不存在)
+- `ws-handlers/slave.ts` — WebSocket message routing；TCP 端点复用（`tcpEndpoints`）+ Unit ID 路由 + 启停串行化
+
+### Tests (src/\\*\\*/__tests__/)
+- `modbus-slave-server.test.ts` — PDU 编解码、CRC/LRC、地址与长度校验、广播、组帧防御
+- `modbus-utils.test.ts` — 字节序换算与显示格式化
+- `use-app-state.test.ts` — reducer 纯函数（快照校准、增量补丁、删除清理、日志环形缓冲）
 
 ### Pages (src/app/)
 - `layout.tsx` — Root layout (fonts, metadata, theme)
@@ -55,8 +60,9 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 1. **Understand the feature** — Read related files in `modbus-master` first if applicable
 2. **Plan the implementation** — Identify which files need changes
 3. **Implement** — Write code, following existing patterns
-4. **Verify** — `npm run build` to catch TypeScript errors
+4. **Verify** — `pnpm run validate`（ts-check + eslint + stylelint + test）
 5. **Document** — Update relevant docs if needed
+6. **Test what is testable** — 协议层与 reducer 的纯函数改动必须补 `src/**/__tests__` 用例
 
 ## Quality Checklist / 质量检查清单
 

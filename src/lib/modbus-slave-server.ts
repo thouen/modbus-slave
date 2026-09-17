@@ -14,6 +14,21 @@ import {
  * Memory model is managed externally via SlaveMemory.
  */
 
+/** 单次内存变更（area + address + 新值），用于向 UI 推送精确增量 */
+export interface RegisterChange {
+  area: RegisterArea;
+  address: number;
+  value: number;
+}
+
+export interface SlaveServerOptions {
+  /**
+   * 内存值**实际发生变化**时回调（新旧值相同则不触发）。
+   * 协议层保持纯粹：不在此做任何 IO，由调用方决定如何广播。
+   */
+  onRegisterChange?: (change: RegisterChange) => void;
+}
+
 export interface SlaveServer {
   memory: SlaveMemory;
   config: SlaveConfig;
@@ -29,8 +44,9 @@ export interface SlaveServer {
   writeRange: (area: RegisterArea, startAddress: number, values: number[]) => boolean;
 }
 
-export function createSlaveServer(config: SlaveConfig): SlaveServer {
+export function createSlaveServer(config: SlaveConfig, options: SlaveServerOptions = {}): SlaveServer {
   const memory = createSlaveMemory(config);
+  const notifyChange = options.onRegisterChange;
 
   // ── CRC16 (ModBus RTU) ──
 
@@ -125,10 +141,14 @@ export function createSlaveServer(config: SlaveConfig): SlaveServer {
     slaveId: number;
     pdu: Uint8Array;
   } | null {
-    if (frame.length < 8) return null;
+    // 畸形帧防御：长度下界/上界 + protocolId 必须为 0（ModBus TCP 规范）
+    if (frame.length < 8 || frame.length > MODBUS_MAX.ADU_LENGTH) return null;
     const transactionId = (frame[0] << 8) | frame[1];
     const protocolId = (frame[2] << 8) | frame[3];
+    if (protocolId !== 0) return null;
     const length = (frame[4] << 8) | frame[5];
+    // length 覆盖 unitId(1) + PDU，且必须与实际帧长一致（不一致说明组帧出错，直接丢弃）
+    if (length < 2 || 6 + length !== frame.length) return null;
     const slaveId = frame[6];
     const pdu = frame.subarray(7, 6 + length); // length includes slaveId
     return { transactionId, protocolId, slaveId, pdu };
@@ -168,7 +188,10 @@ export function createSlaveServer(config: SlaveConfig): SlaveServer {
 
   function writeBit(area: RegisterArea, address: number, value: boolean): boolean {
     if (area !== 'coils') return false; // discrete inputs are read-only
-    memory.coils[address] = value ? 1 : 0;
+    const next = value ? 1 : 0;
+    if (memory.coils[address] === next) return true; // 值未变化：不产生增量事件
+    memory.coils[address] = next;
+    notifyChange?.({ area, address, value: next });
     return true;
   }
 
@@ -179,7 +202,10 @@ export function createSlaveServer(config: SlaveConfig): SlaveServer {
 
   function writeReg(area: RegisterArea, address: number, value: number): boolean {
     if (area !== 'holdingRegisters') return false; // input registers are read-only
-    memory.holdingRegisters[address] = value & 0xffff;
+    const next = value & 0xffff;
+    if (memory.holdingRegisters[address] === next) return true; // 值未变化：不产生增量事件
+    memory.holdingRegisters[address] = next;
+    notifyChange?.({ area, address, value: next });
     return true;
   }
 
@@ -305,6 +331,10 @@ export function createSlaveServer(config: SlaveConfig): SlaveServer {
         if (byteCount !== Math.ceil(quantity / 8)) {
           return buildException(fc, MODBUS_EXCEPTION.ILLEGAL_DATA_VALUE);
         }
+        // 数据长度充分性：不足时报异常码，绝不靠 `?? 0` 静默补零写入内存
+        if (data.length < 5 + byteCount) {
+          return buildException(fc, MODBUS_EXCEPTION.ILLEGAL_DATA_VALUE);
+        }
         if (!checkAddress(area, startAddr, quantity)) {
           return buildException(fc, MODBUS_EXCEPTION.ILLEGAL_DATA_ADDRESS);
         }
@@ -338,6 +368,10 @@ export function createSlaveServer(config: SlaveConfig): SlaveServer {
           return buildException(fc, MODBUS_EXCEPTION.ILLEGAL_DATA_VALUE);
         }
         if (byteCount !== quantity * 2) {
+          return buildException(fc, MODBUS_EXCEPTION.ILLEGAL_DATA_VALUE);
+        }
+        // 数据长度充分性：不足时报异常码，绝不靠 `?? 0` 静默补零写入内存
+        if (data.length < 5 + byteCount) {
           return buildException(fc, MODBUS_EXCEPTION.ILLEGAL_DATA_VALUE);
         }
         if (!checkAddress(area, startAddr, quantity)) {
@@ -394,8 +428,8 @@ export function createSlaveServer(config: SlaveConfig): SlaveServer {
       fc = decoded[1];
       pdu = decoded.subarray(2);
     } else {
-      // RTU
-      if (request.length < 4) return null;
+      // RTU：长度必须落在合法 ADU 区间内
+      if (request.length < 4 || request.length > MODBUS_MAX.ADU_LENGTH) return null;
       // Check CRC
       const msgLen = request.length - 2;
       const calculatedCrc = crc16(request, msgLen);
@@ -446,6 +480,9 @@ export function createSlaveServer(config: SlaveConfig): SlaveServer {
   }
 
   function writeRegister(area: RegisterArea, address: number, value: number): boolean {
+    // UI 写入同样必须过地址校验：否则越界写会被类型化数组静默丢弃，
+    // 而变更检测会把"读回 undefined"误判成一次真实变更。
+    if (!checkAddress(area, address, 1)) return false;
     if (area === 'coils') {
       return writeBit(area, address, value !== 0);
     }
@@ -465,6 +502,9 @@ export function createSlaveServer(config: SlaveConfig): SlaveServer {
   }
 
   function writeRange(area: RegisterArea, startAddress: number, values: number[]): boolean {
+    if (values.length === 0) return false;
+    // 先整体校验范围，避免"写一半才发现越界"的部分写入
+    if (!checkAddress(area, startAddress, values.length)) return false;
     for (let i = 0; i < values.length; i++) {
       if (!writeRegister(area, startAddress + i, values[i])) {
         return false;

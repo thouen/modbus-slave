@@ -70,11 +70,10 @@ This project is the **slave counterpart** to `modbus-master`, sharing the same t
 
 | Feature / 功能 | Supported / 支持 | Notes / 备注 |
 |---|---|---|
-| ModBus TCP | ✅ | Primary transport / 主要传输方式 |
-| ModBus RTU over TCP | ✅ | Emulation / 模拟支持 |
-| ModBus ASCII over TCP | ✅ | Emulation / 模拟支持 |
-| Serial RTU | ⏳ | Planned / 计划中 |
-| Serial ASCII | ⏳ | Planned / 计划中 |
+| ModBus TCP (MBAP) | ✅ | 主传输方式；单端口 + Unit ID 路由 |
+| Serial RTU | ✅ | 依赖 `serialport`（已列入 `dependencies`）；需要真实串口设备 |
+| Serial ASCII | ✅ | 同上 |
+| ModBus RTU / ASCII **over TCP** | ❌ | 未实现：TCP 连接恒按 MBAP 解析 |
 | FC01 Read Coils | ✅ |  |
 | FC02 Read Discrete Inputs | ✅ |  |
 | FC03 Read Holding Registers | ✅ |  |
@@ -83,23 +82,24 @@ This project is the **slave counterpart** to `modbus-master`, sharing the same t
 | FC06 Write Single Register | ✅ |  |
 | FC15 Write Multiple Coils | ✅ |  |
 | FC16 Write Multiple Registers | ✅ |  |
+| Broadcast (Unit 0) | ✅ | 仅写操作；作用于该端点全部从站，不回响应 |
 
 ## Register Memory Model / 寄存器内存模型
 
-Each slave device maintains four independent register areas. Sizes are configurable per slave.
+Each slave device maintains four independent register areas. Sizes are configurable per slave and fixed at start time.
 
-每个从站设备维护四个独立的寄存器区。每个从站的大小可配置。
+每个从站设备维护四个独立的寄存器区。每个从站的大小可配置，且在启动时固定。
 
 | Area / 区域 | Type / 类型 | Default Size / 默认大小 | Access / 访问 |
 |---|---|---|---|
-| Coils (FC01/05/15) | Bit (boolean) | 2000 bits | Read/Write |
-| Discrete Inputs (FC02) | Bit (boolean) | 2000 bits | Read Only |
-| Holding Registers (FC03/06/16) | 16-bit word | 2000 registers | Read/Write |
-| Input Registers (FC04) | 16-bit word | 2000 registers | Read Only |
+| Coils (FC01/05/15) | Bit | 100 | Read/Write |
+| Discrete Inputs (FC02) | Bit | 100 | Read Only |
+| Holding Registers (FC03/06/16) | 16-bit word | 100 | Read/Write |
+| Input Registers (FC04) | 16-bit word | 100 | Read Only |
 
-Register memory is stored as typed arrays (`Uint16Array` for registers, `Uint8Array` bit-packed for coils/inputs) for maximum performance and memory efficiency.
+Register memory is stored as typed arrays (`Uint16Array` for registers, `Uint8Array` for bits) — **1 byte per bit, not bit-packed**. Protocol limits (`MODBUS_MAX`) are independent of per-slave capacity.
 
-寄存器内存存储为类型化数组（寄存器用 `Uint16Array`，线圈/输入用 `Uint8Array` 按位打包），以实现最高性能和内存效率。
+寄存器内存用类型化数组存储（寄存器 `Uint16Array`，位区 `Uint8Array`）——**每个位占 1 字节，并非按位打包**。协议上限（`MODBUS_MAX`）与从站容量彼此独立。
 
 ### Slave Address / 从站地址
 
@@ -111,31 +111,47 @@ Register memory is stored as typed arrays (`Uint16Array` for registers, `Uint8Ar
 - 广播地址 0 支持 FC05/06/15/16 写操作
 - 每个从站有可配置的单元 ID
 
+### TCP Addressing / TCP 寻址
+
+- 一个 `host:port` **只监听一次**（`tcpEndpoints`），请求按 MBAP 中的 Unit ID 路由到对应从站
+- 同一端口可并存多个不同 Unit ID 的从站；同端口同 Unit ID 启动会被明确拒绝
+- Unit 0 广播作用于该端点上的全部从站，且不回响应
+- 仅当该端点再无任何从站时才释放监听器（同时销毁残留连接）
+- 畸形 MBAP（`protocolId != 0`、`length` 越界）会关闭连接；PDU 长度不足回异常码 `0x03`
+
 ## WebSocket API / WebSocket API
 
-### Message format / 消息格式
+Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping` → `pong`。
+（与代码同步的完整契约表见工作空间 [`AGENTS.md`](../AGENTS.md:200) 第 7 节。）
 
-```typescript
+```
 // Client → Server
-{ action: 'listSlaves' }
-{ action: 'addSlave', config: SlaveConfig }
-{ action: 'updateSlave', id, config }
-{ action: 'deleteSlave', id }
-{ action: 'startSlave', id }
-{ action: 'stopSlave', id }
-{ action: 'readRegisters', tabId, slaveId, area, startAddress, quantity }
-{ action: 'writeRegister', slaveId, area, address, value }
-{ action: 'getSlaveStatus', id }
+{ type: 'start_slave',    payload: { slaveId, config } }
+{ type: 'stop_slave',     payload: { slaveId } }
+{ type: 'restart_slave',  payload: { slaveId, config } }   // 先停后起，服务端串行执行
+{ type: 'read_registers', payload: { tabId, slaveId, area, startAddress, quantity } }
+{ type: 'write_register', payload: { slaveId, area, address, value } }
+{ type: 'write_registers',payload: { slaveId, area, startAddress, values } }
+{ type: 'ping' }
 
 // Server → Client
-{ event: 'slaveList', slaves: SlaveConfig[] }
-{ event: 'slaveStarted', id, config }
-{ event: 'slaveStopped', id }
-{ event: 'slaveError', id, message }
-{ event: 'registerData', tabId, data: RegisterData[] }
-{ event: 'logEntry', slaveId, entry: LogEntry }
-{ event: 'slaveStatus', id, status: 'running'|'stopped'|'error' }
+{ type: 'slave_snapshot',     payload: { running: [{ slaveId, config }] } }  // 连接建立时回放
+{ type: 'slave_started',      payload: { slaveId, config } }                 // config 为服务端实际生效配置
+{ type: 'slave_stopped',      payload: { slaveId } }
+{ type: 'slave_error',        payload: { slaveId, message } }
+{ type: 'log_entry',          payload: LogEntry }
+{ type: 'read_response',      payload: { tabId, data } }
+{ type: 'write_response',     payload: { success, error? } }
+{ type: 'register_update',    payload: { slaveId, changes: [{ area, address, value }] } }
+{ type: 'error',              payload: { message } }
+{ type: 'pong' }
 ```
+
+> ⚠️ 命名陷阱：WS 载荷中的 `slaveId` 是**应用内部 id（string）**，而 `SlaveConfig.slaveId` 是 **ModBus 单元号（1–247）**。
+>
+> ⚠️ `slaveId` in the WS payload is the **internal app id (string)**, while `SlaveConfig.slaveId` is the **ModBus unit id (1–247)**.
+
+`register_update` 只包含**实际发生变更**的地址（写入相同值不产生事件），并且一次 PDU 的多个变更合并为一条消息。
 
 ## Data Display Formats / 数据显示格式
 
@@ -160,32 +176,44 @@ Register memory is stored as typed arrays (`Uint16Array` for registers, `Uint8Ar
 
 - **Client side**: React Context + useReducer pattern (`useAppState`)
   - Slave configurations, view tabs, register data cache, logs
-  - Persisted to localStorage (configs + view tabs)
-- **Server side**: In-memory map of running slave instances
-  - Each `ModbusSlaveServer` instance owns its register memory and TCP listener
-  - Register writes broadcast to all connected WebSocket clients
+  - Persisted to localStorage (configs + view tabs); runtime state is never persisted
+  - `runningConfigs` holds the **server-authoritative config** of running slaves, used to show "restart required"
+- **Server side**: in-memory `runningSlaves` (per slave) + `tcpEndpoints` (per `host:port` listener)
+  - **Server is the single source of truth for running state**; on connect it pushes `slave_snapshot`
+  - Register writes are broadcast to all WebSocket clients as precise deltas
+  - Config fields fixed at listen time (port / unit id / capacities) require `restart_slave` to take effect
 
 - **客户端**: React Context + useReducer 模式 (`useAppState`)
   - 从站配置、查看标签、寄存器数据缓存、日志
-  - 持久化到 localStorage（配置 + 查看标签）
-- **服务端**: 运行中从站实例的内存映射
-  - 每个 `ModbusSlaveServer` 实例拥有自己的寄存器内存和 TCP 监听器
-  - 寄存器写入广播到所有连接的 WebSocket 客户端
+  - 持久化到 localStorage（配置 + 查看标签）；运行时状态一概不持久化
+  - `runningConfigs` 保存运行中从站的**服务端权威配置**，用于提示"需重启生效"
+- **服务端**: 内存中的 `runningSlaves`（按从站）+ `tcpEndpoints`（按 `host:port` 的监听端点）
+  - **服务端是运行状态的唯一事实源**：连接建立即下发 `slave_snapshot`
+  - 寄存器写入以精确增量广播给全部 WebSocket 客户端
+  - 监听期固定的配置字段（端口 / 单元号 / 容量）必须通过 `restart_slave` 才能生效
 
 ## Roadmap / 路线图
 
-- [ ] Serial port support (RTU / ASCII via SerialPort library)
+- [x] Serial port support (RTU / ASCII via `serialport`, already a dependency)
+- [x] Multi-slave on a single TCP port via Unit ID routing
+- [x] Real-time register deltas pushed to the UI (`register_update`)
+- [x] Run-time config changes via `restart_slave`
+- [ ] ModBus RTU / ASCII **over TCP** (currently TCP is always MBAP)
 - [ ] ModBus UDP support
 - [ ] Register value simulation (ramp, sine wave, random)
 - [ ] Slave response delay simulation (for testing timeouts)
 - [ ] Error injection (CRC errors, exception responses)
 - [ ] Import/export register memory snapshots
-- [ ] Project save/load (multi-slave configuration files)
+- [ ] Automated tests for the protocol layer
 
-- [ ] 串口支持（通过 SerialPort 库的 RTU / ASCII）
+- [x] 串口支持（通过 `serialport` 的 RTU / ASCII，依赖已就位）
+- [x] 单 TCP 端口多从站（Unit ID 路由）
+- [x] 寄存器实时增量推送（`register_update`）
+- [x] 运行中改配置（`restart_slave`）
+- [ ] ModBus RTU / ASCII **over TCP**（当前 TCP 恒为 MBAP）
 - [ ] ModBus UDP 支持
 - [ ] 寄存器值模拟（斜坡、正弦波、随机）
 - [ ] 从站响应延迟模拟（用于测试超时）
 - [ ] 错误注入（CRC 错误、异常响应）
 - [ ] 导入/导出寄存器内存快照
-- [ ] 项目保存/加载（多从站配置文件）
+- [ ] 协议层自动化测试

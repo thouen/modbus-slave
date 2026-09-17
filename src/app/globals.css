@@ -82,7 +82,7 @@
   --popover: #131C2E;
   --popover-foreground: #CBD5E1;
   --primary: #3B82F6;
-  --primary-foreground: #FFFFFF;
+  --primary-foreground: #FFF;
   --secondary: #1E293B;
   --secondary-foreground: #CBD5E1;
   --muted: #1E293B;
@@ -90,7 +90,7 @@
   --accent: #1E293B;
   --accent-foreground: #CBD5E1;
   --destructive: #EF4444;
-  --destructive-foreground: #FFFFFF;
+  --destructive-foreground: #FFF;
   --border: #1E293B;
   --input: #1E293B;
   --ring: #3B82F6;
@@ -106,23 +106,21 @@
   --success: #22C55E;
   --warning: #F59E0B;
   --data: #06B6D4;
-  --primary-container: rgba(59, 130, 246, 0.15);
+  --primary-container: rgb(59 130 246 / 15%);
   --on-primary-container: #93C5FD;
 
   /* Shadows */
-  --shadow-card-value: 0 1px 2px 0 rgb(0 0 0 / 0.3);
-  --shadow-float-value: 0 10px 15px -3px rgb(0 0 0 / 0.4);
-  --shadow-dialog-value: 0 25px 50px -12px rgb(0 0 0 / 0.6);
-
+  --shadow-card-value: 0 1px 2px 0 rgb(0 0 0 / 30%);
+  --shadow-float-value: 0 10px 15px -3px rgb(0 0 0 / 40%);
+  --shadow-dialog-value: 0 25px 50px -12px rgb(0 0 0 / 60%);
   --sidebar: #0E1628;
   --sidebar-foreground: #CBD5E1;
   --sidebar-primary: #3B82F6;
-  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-primary-foreground: #FFF;
   --sidebar-accent: #1E293B;
   --sidebar-accent-foreground: #CBD5E1;
   --sidebar-border: #1E293B;
   --sidebar-ring: #3B82F6;
-
   --chart-1: #3B82F6;
   --chart-2: #22C55E;
   --chart-3: #F59E0B;
@@ -143,17 +141,17 @@ body {
 /* LED indicator glow */
 .led-green {
   background-color: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+  box-shadow: 0 0 6px rgb(34 197 94 / 60%);
 }
 
 .led-amber {
   background-color: #f59e0b;
-  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+  box-shadow: 0 0 6px rgb(245 158 11 / 60%);
 }
 
 .led-red {
   background-color: #ef4444;
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+  box-shadow: 0 0 6px rgb(239 68 68 / 60%);
 }
 
 .led-gray {
@@ -162,7 +160,7 @@ body {
 
 /* Data flicker animation for terminal-like updates */
 @keyframes data-flash {
-  0% { background-color: rgba(6, 182, 212, 0.2); }
+  0% { background-color: rgb(6 182 212 / 20%); }
   100% { background-color: transparent; }
 }
 

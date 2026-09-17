@@ -1,4 +1,6 @@
 allowBuilds:
+  # serialport 的原生绑定必须允许构建脚本，否则 require('serialport') 会失败
+  '@serialport/bindings-cpp': true
   esbuild: true
   sharp: true
   unrs-resolver: true

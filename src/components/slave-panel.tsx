@@ -34,7 +34,7 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
 } from '@/components/ui/alert-dialog';
-import { Plus, Upload, Download, Pencil, Trash2, Play, Square, Server, Radio, Cable, Gauge } from 'lucide-react';
+import { Plus, Upload, Download, Pencil, Trash2, Play, Square, Server, Radio, Cable, Gauge, RefreshCw } from 'lucide-react';
 
 function statusColor(status: string): string {
   switch (status) {
@@ -55,6 +55,29 @@ function protocolBadge(protocol: Protocol, mode: Mode): { label: string; cls: st
   return { label: 'RTU', cls: 'bg-zinc-500/15 text-zinc-400' };
 }
 
+/**
+ * 需要重启才能生效的字段指纹。
+ * 监听器（端口/串口）与内存容量都在启动时固定，改这些字段必须"先停后起"。
+ */
+function restartKey(cfg: SlaveConfig): string {
+  return [
+    cfg.protocol,
+    cfg.mode,
+    cfg.tcpConfig?.host ?? '',
+    cfg.tcpConfig?.port ?? '',
+    cfg.serialConfig?.port ?? '',
+    cfg.serialConfig?.baudRate ?? '',
+    cfg.serialConfig?.dataBits ?? '',
+    cfg.serialConfig?.stopBits ?? '',
+    cfg.serialConfig?.parity ?? '',
+    cfg.slaveId,
+    cfg.coilCount,
+    cfg.discreteInputCount,
+    cfg.holdingRegisterCount,
+    cfg.inputRegisterCount,
+  ].join('|');
+}
+
 function slaveTarget(slave: SlaveConfig): string {
   if (slave.protocol === 'tcp') {
     return `${slave.tcpConfig?.host ?? '-'}:${slave.tcpConfig?.port ?? '-'}`;
@@ -65,7 +88,7 @@ function slaveTarget(slave: SlaveConfig): string {
 export function SlavePanel() {
   const { t } = useI18n();
   const { state, dispatch } = useAppState();
-  const { startSlave, stopSlave } = useModbusWs();
+  const { startSlave, stopSlave, restartSlave } = useModbusWs();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSlave, setEditingSlave] = useState<SlaveConfig | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -83,7 +106,13 @@ export function SlavePanel() {
   };
 
   const handleNew = () => {
-    setEditingSlave(createDefaultSlave());
+    const draft = createDefaultSlave();
+    // 单端口多从站按 Unit ID 区分：新建时自动取一个未占用的单元号，
+    // 避免用户直接点"启动"就撞上 Unit ID 冲突
+    const used = new Set(state.slaves.map((s) => s.slaveId));
+    let unitId = draft.slaveId;
+    while (used.has(unitId) && unitId < 247) unitId += 1;
+    setEditingSlave({ ...draft, slaveId: unitId });
     setDialogOpen(true);
   };
 
@@ -186,6 +215,12 @@ export function SlavePanel() {
             const status = state.slaveStatus[slave.id] ?? 'stopped';
             const badge = protocolBadge(slave.protocol, slave.mode);
             const isActive = state.activeSlaveId === slave.id;
+            // 服务端实际生效的配置 vs 本地已改配置：不一致即"需重启生效"
+            const runningConfig = state.runningConfigs[slave.id];
+            const needsRestart =
+              status === 'running' &&
+              runningConfig !== undefined &&
+              restartKey(runningConfig) !== restartKey(slave);
 
             return (
               <div
@@ -205,9 +240,19 @@ export function SlavePanel() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-medium text-foreground truncate">{slave.name}</span>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-sm font-medium shrink-0 ${badge.cls}`}>
-                        {badge.label}
-                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {needsRestart && (
+                          <span
+                            className="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-amber-500/15 text-amber-400"
+                            title={t('restartRequired')}
+                          >
+                            {t('restart')}
+                          </span>
+                        )}
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-sm font-medium ${badge.cls}`}>
+                          {badge.label}
+                        </span>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
                       <span className="truncate">{slaveTarget(slave)}</span>
@@ -233,6 +278,17 @@ export function SlavePanel() {
                         ? <Square className="w-3 h-3" />
                         : <Play className="w-3 h-3" />}
                     </Button>
+                    {needsRestart && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6 text-amber-400 hover:text-amber-300"
+                        onClick={(e) => { e.stopPropagation(); restartSlave(slave.id, slave); }}
+                        title={t('restartSlave')}
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                      </Button>
+                    )}
                     <Button
                       size="icon"
                       variant="ghost"

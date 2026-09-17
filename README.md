@@ -7,11 +7,13 @@ A modern web-based ModBus slave (server) simulator with a professional industria
 ## Features / 功能特性
 
 - **Multi-slave support** — Run multiple slave devices simultaneously, each with independent register memory
-- **ModBus TCP** — Listen on configurable port and IP
-- **Serial port support** — RTU / ASCII over serial (COM port) — future integration
+- **ModBus TCP** — Listen on configurable port and IP; one port serves many unit IDs (standard gateway addressing)
+- **Serial port support** — RTU / ASCII over serial (COM port), provided by the `serialport` dependency
+- **Restart-safe config changes** — Editing a running slave shows "restart required" and applies via `restart_slave`
 - **Four register areas** — Coils, Discrete Inputs, Holding Registers, Input Registers
 - **Real-time data view** — Multi-tab register viewer with hex/decimal/binary/long/float/double formats
 - **Live request logging** — All master read/write requests logged with timestamps and raw data
+- **Real-time register deltas** — Master/UI writes are pushed to the viewer as precise per-address updates
 - **Editable registers** — Manually modify coil and holding register values from the UI
 - **Byte order configuration** — Configurable 32-bit (ABCD/DCBA/BADC/CDAB) and 64-bit byte order
 - **i18n** — Bilingual (English / 中文) interface
@@ -32,9 +34,9 @@ A modern web-based ModBus slave (server) simulator with a professional industria
 
 ## Tech Stack / 技术栈
 
-- Next.js 15 (App Router, Server Components)
+- Next.js 16 (App Router)
 - React 19
-- TypeScript 5.7
+- TypeScript 5
 - Tailwind CSS v4
 - shadcn/ui (new-york variant)
 - WebSocket (ws library) — realtime communication
@@ -44,19 +46,23 @@ A modern web-based ModBus slave (server) simulator with a professional industria
 ## Getting Started / 快速开始
 
 ```bash
-# Install dependencies
-npm run prepare
+# Install dependencies / 安装依赖
+pnpm install
 
-# Development
-npm run dev
-# Open http://localhost:3000
+# Development / 开发模式，端口 5001，自定义服务器已挂载 /ws/slave
+pnpm run dev
+# Open http://localhost:5001
 
-# Build
-npm run build
+# Build / 构建
+pnpm run build
 
-# Production
-npm start
+# Production / 生产模式，同样运行自定义服务器以保证 WebSocket 可用
+pnpm run start
+# 端口由 DEPLOY_RUN_PORT 决定，缺省 5001
 ```
+
+> 生产模式 **必须** 通过 `scripts/start.sh` 运行 `src/server.ts`（内部使用 `tsx`）。
+> 直接使用 `next start` 只会启动 Next 内置服务器，`/ws/slave` 端点不会注册。
 
 ## Project Structure / 项目结构
 

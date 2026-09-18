@@ -3,14 +3,12 @@
 import { createContext, useContext, useEffect, useReducer, type ReactNode } from 'react';
 import {
   isBitArea,
-  isWritableArea,
   type SlaveConfig,
   type RegisterArea,
   type RegisterData,
   type LogEntry,
   type RegisterViewTab,
   type SlaveStatus,
-  type WriteMode,
 } from '@/lib/modbus-types';
 import { generateId } from '@/lib/modbus-utils';
 
@@ -74,12 +72,13 @@ const initialState: AppState = {
 };
 
 /**
- * 兼容旧版持久化视图标签：补齐新增字段（writeMode / formatOverrides / 字节序 / 数量）。
- * 缺省写模式按区域推断：可写区域默认 multiple（保留老用户的写入能力），只读区域 off。
+ * 兼容旧版持久化视图标签：补齐新增字段（formatOverrides / 字节序 / 数量）。
+ *
+ * 返回值是显式构造的完整对象，因此旧数据里已经废弃的字段（如 `writeMode`）
+ * 会被自然丢弃，无需额外清理。
  */
 export function migrateViewTab(tab: Partial<RegisterViewTab>): RegisterViewTab {
   const area: RegisterArea = tab.area ?? 'holdingRegisters';
-  const fallbackWriteMode: WriteMode = isWritableArea(area) ? 'multiple' : 'off';
   const overrides = tab.formatOverrides;
   return {
     id: tab.id ?? generateId(),
@@ -91,7 +90,6 @@ export function migrateViewTab(tab: Partial<RegisterViewTab>): RegisterViewTab {
     displayFormat: tab.displayFormat ?? (isBitArea(area) ? 'led' : 'hex'),
     formatOverrides:
       overrides && Object.keys(overrides).length > 0 ? overrides : undefined,
-    writeMode: tab.writeMode ?? fallbackWriteMode,
     byteOrder32: tab.byteOrder32 ?? 'ABCD',
     byteOrder64: tab.byteOrder64 ?? 'ABCDEFGH',
   };

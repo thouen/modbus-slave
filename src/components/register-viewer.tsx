@@ -15,7 +15,6 @@ import {
   type RegisterArea,
   type RegisterData,
   type RegisterViewTab,
-  type WriteMode,
 } from '@/lib/modbus-types';
 import {
   encodeValueToRegisters,
@@ -112,7 +111,10 @@ function formatDraftValue(value: number, format: DataDisplayFormat): string {
 
 /**
  * 寄存器查看器：标签栏（绑定从站）+ 配置条（内联可编辑）+ 数据表（逐行类型 + 行内编辑写入）。
- * 交互语义对齐 modbus-master：写模式下数据格可直接编辑，暂存草稿后由「写入」整段提交。
+ * 交互语义对齐 modbus-master：可写区域的数据格可直接编辑，暂存草稿后由「写入」整段提交。
+ *
+ * 与 master 的关键差异：这里没有"写功能码 / 写模式"选择。从站是被写的一方，
+ * 界面写入是本地直接改内存，不经过协议栈的 FC 解析路径（详见 modbus-slave-server.ts）。
  */
 export function RegisterViewer() {
   const { t } = useI18n();
@@ -178,7 +180,6 @@ export function RegisterViewer() {
       startAddress,
       quantity: 20,
       displayFormat: 'hex',
-      writeMode: 'multiple',
       byteOrder32: slave.byteOrder32,
       byteOrder64: slave.byteOrder64,
     };
@@ -254,12 +255,19 @@ export function RegisterViewer() {
     });
   }, []);
 
-  /** 整段批量提交：草稿覆盖 + 未编辑行回填原值 */
+  /**
+   * 整段批量提交：草稿覆盖 + 未编辑行回填原值。
+   *
+   * 单点写 / 区间写无需用户选择——按本次提交的值数量自动决定：1 个值用
+   * `writeRegister`，多个值用 `writeRegisters`。这与真实主站的行为一致
+   * （写一个点、写一段分别用对应的写功能码），而在从站侧两者最终都落到
+   * 同一个内存写入函数。
+   */
   const submitWrite = useCallback(
     (tab: RegisterViewTab) => {
-      if (!isRunning || tab.writeMode === 'off' || !isWritableArea(tab.area)) return;
+      if (!isRunning || !isWritableArea(tab.area)) return;
       const data = registerData[tab.id] ?? [];
-      const count = tab.writeMode === 'single' ? 1 : Math.max(1, tab.quantity);
+      const count = Math.max(1, tab.quantity);
       const values: number[] = [];
       const nextDraft = new Map(writeDraft);
       for (let i = 0; i < count; i++) {
@@ -273,8 +281,8 @@ export function RegisterViewer() {
         }
         nextDraft.delete(addr);
       }
-      if (tab.writeMode === 'single') {
-        writeRegister(tab.slaveId, tab.area, tab.startAddress, values[0] ?? 0);
+      if (values.length === 1) {
+        writeRegister(tab.slaveId, tab.area, tab.startAddress, values[0]);
       } else {
         writeRegisters(tab.slaveId, tab.area, tab.startAddress, values);
       }
@@ -321,9 +329,8 @@ export function RegisterViewer() {
   }, [activeTabItemId]);
 
   const quantityMax = activeTab ? maxQuantityForArea(activeTab.area) : 125;
-  const canWrite = activeTab
-    ? isRunning && isWritableArea(activeTab.area) && activeTab.writeMode !== 'off'
-    : false;
+  // 写入能力只由区域决定：线圈 / 保持寄存器可写，离散输入 / 输入寄存器只读
+  const canWrite = activeTab ? isRunning && isWritableArea(activeTab.area) : false;
 
   return (
     <div className="flex h-full min-w-0 flex-col">
@@ -414,7 +421,6 @@ export function RegisterViewer() {
                 updateTab(activeTab.id, {
                   area: v,
                   displayFormat: defaultFormatForArea(v, activeTab.displayFormat),
-                  writeMode: isWritableArea(v) ? activeTab.writeMode : 'off',
                   formatOverrides: undefined,
                 })
               }
@@ -543,37 +549,6 @@ export function RegisterViewer() {
             </label>
           )}
 
-          <span className="h-4 w-px bg-border/30" />
-
-          {/* 写模式（等价于 master 的写功能码） */}
-          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            {t('writeMode')}
-            <Select
-              value={activeTab.writeMode}
-              disabled={!isWritableArea(activeTab.area)}
-              onValueChange={(v) => updateTab(activeTab.id, { writeMode: v as WriteMode })}
-            >
-              <SelectTrigger className="h-6 w-40 border-border/40 bg-background px-2 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="off" className="text-xs">
-                  {t('writeModeOff')}
-                </SelectItem>
-                {isWritableArea(activeTab.area) && (
-                  <>
-                    <SelectItem value="single" className="text-xs">
-                      {t('writeModeSingle')}
-                    </SelectItem>
-                    <SelectItem value="multiple" className="text-xs">
-                      {t('writeModeMultiple')}
-                    </SelectItem>
-                  </>
-                )}
-              </SelectContent>
-            </Select>
-          </label>
-
           {/* 操作按钮 */}
           <div className="ml-auto flex items-center gap-1.5">
             <Button
@@ -586,7 +561,7 @@ export function RegisterViewer() {
               <RefreshCw className={`mr-1 h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
               {t('read')}
             </Button>
-            {isWritableArea(activeTab.area) && activeTab.writeMode !== 'off' && (
+            {isWritableArea(activeTab.area) && (
               <Button
                 variant="outline"
                 size="sm"
@@ -726,9 +701,9 @@ function DataTable({
   const { t } = useI18n();
   const bitArea = isBitArea(tab.area);
   const wordArea = isWordArea(tab.area);
-  const writable = isWritableArea(tab.area) && tab.writeMode !== 'off';
-  const isSingleWrite = writable && tab.writeMode === 'single';
-  const rowCount = isSingleWrite ? 1 : Math.max(1, tab.quantity);
+  // 可写性只看区域，渲染行数恒等于标签的 quantity（用于模拟真实设备的连续数据窗口）
+  const writable = isWritableArea(tab.area);
+  const rowCount = Math.max(1, tab.quantity);
 
   const rows: RegisterData[] = Array.from({ length: rowCount }, (_, i) => {
     const address = tab.startAddress + i;

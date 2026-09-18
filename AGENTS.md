@@ -35,13 +35,13 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 - `utils.ts` — `cn` class merging utility
 
 ### Hooks (src/hooks/)
-- `use-app-state.tsx` — Global app state (React Context + useReducer)；`migrateViewTab()` 负责旧持久化标签的字段迁移（writeMode / formatOverrides / 字节序 / 数量）
+- `use-app-state.tsx` — Global app state (React Context + useReducer)；`migrateViewTab()` 负责旧持久化标签的字段迁移（formatOverrides / 字节序 / 数量），已废弃的字段（如 `writeMode`）会被自然丢弃
 - `use-i18n.tsx` — i18n provider + hook
 - `use-modbus-ws.ts` — WebSocket connection + action dispatchers
 
 ### Components (src/components/)
 - `slave-panel.tsx` — Left panel: slave list + config + start/stop controls
-- `register-viewer.tsx` — 寄存器视图：标签栏（**绑定从站实例**，跨从站显示全部标签 + 从站名徽标，双击重命名）+ 内联配置条（区域 / 起始地址 / 数量 / 默认格式 / 字节序 / 写模式）+ 数据表（逐行类型 + 行内编辑草稿写入）
+- `register-viewer.tsx` — 寄存器视图：标签栏（**绑定从站实例**，跨从站显示全部标签 + 从站名徽标，双击重命名）+ 内联配置条（区域 / 起始地址 / 数量 / 默认格式 / 字节序）+ 数据表（逐行类型 + 行内编辑草稿写入）
 - `log-viewer.tsx` — Real-time request log viewer
 - `ui/` — shadcn/ui base components
 
@@ -60,16 +60,17 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 
 ## Register Viewer Contract / 寄存器视图契约
 
-视图标签（`RegisterViewTab`）绑定**从站实例**（`slaveId` = 应用内部 id），并携带写入能力：
+视图标签（`RegisterViewTab`）绑定**从站实例**（`slaveId` = 应用内部 id），并携带读取窗口与显示配置：
 
 | 字段 | 语义 |
 |---|---|
-| `area` | 数据区域：`coils` / `discreteInputs` / `holdingRegisters` / `inputRegisters` |
+| `area` | 数据区域：`coils` / `discreteInputs` / `holdingRegisters` / `inputRegisters`，同时决定可写性 |
+| `startAddress` / `quantity` | 读取窗口（`quantity` 也是表格渲染行数，用于模拟真实设备的连续数据段） |
 | `displayFormat` | 标签级默认显示格式（可被逐行覆盖） |
 | `formatOverrides` | 逐行类型映射：`Record<address, DataDisplayFormat>`，仅记录分组起始地址 |
-| `writeMode` | `off` 只读 ｜ `single` 仅起始地址一行（线圈 FC05 / 保持寄存器 FC06，走 `write_register`）｜ `multiple` 整段窗口（FC15 / FC16，走 `write_registers`） |
 
-- 离散输入 / 输入寄存器为**只读区域**，`writeMode` 强制 `off`；接口层 `writeRegister` 也会拒绝。
+- **没有写入模式字段。** 从站是"被写"的一方，界面上的写入走 `writeRegister` / `writeRange` **直接改内存**，不经过 `handleRequest()` 的 FC 解析路径，所以"单点写 / 区间写（FC05/06 vs FC15/16）"这类选择在从站侧没有意义，已移除。提交时按值的数量自动决定调用哪个接口。
+- 可写性**只由区域决定**：线圈 / 保持寄存器可写，离散输入 / 输入寄存器只读；接口层 `writeRegister` 也会拒绝只读区域。
 - 行内编辑只写"草稿"，点击「写入」才整段提交；未编辑行回填当前原值，避免部分覆盖。
 - 写入后不主动轮询：视图由服务端 `register_update` 精确增量刷新。
 - 新增字段必须提供迁移缺省（见 `migrateViewTab()`），否则老用户的 localStorage 标签会缺字段。

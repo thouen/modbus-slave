@@ -32,7 +32,6 @@ function makeTab(id: string, slaveId: string, overrides: Partial<RegisterViewTab
     startAddress: 0,
     quantity: 10,
     displayFormat: 'hex',
-    writeMode: 'multiple',
     byteOrder32: 'ABCD',
     byteOrder64: 'ABCDEFGH',
     ...overrides,
@@ -239,35 +238,40 @@ describe('运行配置与删除', () => {
 // ── 视图标签迁移与绑定 ───────────────────────────────────────────
 
 describe('视图标签迁移与绑定', () => {
-  it('migrateViewTab 为旧数据补齐 writeMode / formatOverrides / 字节序 / 数量', () => {
+  it('migrateViewTab 为旧数据补齐 formatOverrides / 字节序 / 数量', () => {
     const migrated = migrateViewTab({ id: 't1', slaveId: 's1' });
     assert.equal(migrated.id, 't1');
     assert.equal(migrated.area, 'holdingRegisters');
-    assert.equal(migrated.writeMode, 'multiple'); // 可写区域默认 multiple，保留写入能力
     assert.equal(migrated.formatOverrides, undefined);
     assert.equal(migrated.quantity, 20);
     assert.equal(migrated.byteOrder32, 'ABCD');
     assert.equal(migrated.byteOrder64, 'ABCDEFGH');
   });
 
-  it('migrateViewTab 对只读区域默认 off、位区域默认 led，并保留已有字段', () => {
-    const readonlyTab = migrateViewTab({ id: 't2', area: 'inputRegisters' });
-    assert.equal(readonlyTab.writeMode, 'off');
-
+  it('migrateViewTab 位区域默认 led，并保留已有字段', () => {
     const bitsTab = migrateViewTab({ id: 't3', area: 'coils' });
     assert.equal(bitsTab.displayFormat, 'led');
-    assert.equal(bitsTab.writeMode, 'multiple');
 
     const explicit = migrateViewTab({
       id: 't4',
       area: 'holdingRegisters',
-      writeMode: 'single',
       displayFormat: 'float',
       formatOverrides: { 4: 'double' },
     });
-    assert.equal(explicit.writeMode, 'single');
     assert.equal(explicit.displayFormat, 'float');
     assert.deepEqual(explicit.formatOverrides, { 4: 'double' });
+  });
+
+  it('migrateViewTab 丢弃旧数据里已废弃的 writeMode 字段', () => {
+    // 老版本持久化标签带着 writeMode；迁移后标签上不应再出现该字段
+    const legacy = {
+      id: 't6',
+      area: 'holdingRegisters',
+      writeMode: 'single',
+    } as unknown as Partial<RegisterViewTab>;
+    const migrated = migrateViewTab(legacy);
+    assert.equal('writeMode' in migrated, false);
+    assert.equal(migrated.area, 'holdingRegisters');
   });
 
   it('migrateViewTab 丢弃空的 formatOverrides', () => {
@@ -278,11 +282,12 @@ describe('视图标签迁移与绑定', () => {
     const state = baseState({ slaves: [makeSlave('s1'), makeSlave('s2')], activeSlaveId: 's1' });
     const next = appReducer(state, {
       type: 'ADD_VIEW_TAB',
-      payload: makeTab('t2', 's2', { writeMode: 'off' }),
+      payload: makeTab('t2', 's2', { startAddress: 5 }),
     });
     assert.equal(next.activeSlaveId, 's2');
     assert.equal(next.activeViewTabId, 't2');
     assert.equal(next.viewTabs.length, 1);
+    assert.equal(next.viewTabs[0].startAddress, 5);
   });
 
   it('同从站附件写入 UPDATE_VIEW_TAB 会覆盖 formatOverrides 且不影响其它标签', () => {
@@ -295,11 +300,9 @@ describe('视图标签迁移与绑定', () => {
     const updated: RegisterViewTab = {
       ...makeTab('t1', 's1'),
       formatOverrides: { 0: 'float' },
-      writeMode: 'off',
     };
     const next = appReducer(state, { type: 'UPDATE_VIEW_TAB', payload: updated });
     assert.deepEqual(next.viewTabs[0].formatOverrides, { 0: 'float' });
-    assert.equal(next.viewTabs[0].writeMode, 'off');
     assert.deepEqual(next.viewTabs[1].formatOverrides, undefined);
     assert.equal(next.viewTabs[1].startAddress, 100);
   });

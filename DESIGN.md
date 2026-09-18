@@ -176,19 +176,25 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 
 交互语义与 modbus-master 对齐（同样的标签栏 + 内联配置条 + 逐行类型 + 行内编辑写入）。
 
+> 写入侧不照抄 master：从站是"被写"的一方，界面上的写入是**本地直接改内存**
+> （`writeRegister` / `writeRange`，见 [`modbus-slave-server.ts`](src/lib/modbus-slave-server.ts:482)），
+> 不经过 `handleRequest()` 的 FC 解析路径。因此这里没有"写功能码 / 写模式"选择。
+
 | 能力 | 实现 |
 |---|---|
 | 标签绑定 | `RegisterViewTab.slaveId` 绑定**从站实例**（内部 id）；标签栏显示全部标签（跨从站）并带从站名徽标；点击标签同时切换活动从站；无任何从站时禁止新建 |
-| 配置条 | 区域 / 起始地址 / 寄存器数量 / 默认格式 / 字节序（按默认格式条件显示）/ 写模式，全部**内联可编辑**；数量上限按区域取 2000（位）/ 125（字） |
+| 配置条 | 区域 / 起始地址 / 寄存器数量 / 默认格式 / 字节序（按默认格式条件显示），全部**内联可编辑**；数量上限按区域取 2000（位）/ 125（字） |
+| 读取窗口 | `startAddress` + `quantity` 是标签的连续窗口，同时也是表格渲染行数——用于按地址连续地模拟真实设备的一段数据；`register_update` 增量只补窗口内已缓存的地址 |
 | 逐行类型 | `formatOverrides: Record<address, DataDisplayFormat>`，由 `resolveRegisterLayout()` 计算每行角色：分组起点可改类型，被宽类型占用的后续行显示 `—` 且不可选 |
 | 宽类型跨度 | 32 位占 2 个寄存器、64 位占 4 个；空间不足或位区域时该类型在选项中禁用（`formatFitsAt()`） |
 | 位区域渲染 | `coils` / `discreteInputs` 每行 1 bit，格式化值列为 0/1 开关（可写区域点击即改草稿） |
 | 字区域渲染 | `led` 为 16 位可点击位开关组，其余格式为文本 |
-| 写模式 | `writeMode: 'off' \| 'single' \| 'multiple'`：`off` 只读；`single` 仅起始地址一行可写（线圈 FC05 / 保持寄存器 FC06，走 `write_register`）；`multiple` 整段窗口可写（FC15 / FC16，走 `write_registers`）。只读区域强制 `off` |
-| 写入流程 | 写模式下数据格直接编辑 → 暂存草稿（琥珀色高亮 + 行首圆点）→「写入」整段提交（未编辑行回填当前原值）→ 服务端 `write_response` 回执 + `register_update` 增量刷新视图 |
+| 写入权限 | **只由区域决定**：`coils` / `holdingRegisters` 可写，`discreteInputs` / `inputRegisters` 只读（`isWritableArea()`）。界面写入不引入任何 FC 语义 |
+| 单点 / 区间 | 无需用户选择，按提交的值数量自动决定：1 个值走 `write_register`，多个值走 `write_registers`。两者最终都落到同一个内存写入函数，仅日志粒度不同——这与真实主站"写一个点、写一段用不同写功能码"的行为一致 |
+| 写入流程 | 可写区域的数据格直接编辑 → 暂存草稿（琥珀色高亮 + 行首圆点）→「写入」整段提交（未编辑行回填当前原值）→ 服务端 `write_response` 回执 + `register_update` 增量刷新视图 |
 | 失败可见性 | 只读区域 / 越界写入由服务端回 `success:false` + 原因，前端写入按从站筛选的错误日志 |
 
-> 迁移：旧持久化标签缺少 `writeMode` 时由 [`migrateViewTab()`](src/hooks/use-app-state.tsx:78) 补齐——可写区域默认 `multiple`，只读区域默认 `off`，位区域默认格式为 `led`。
+> 迁移：旧持久化标签缺少 `formatOverrides` / 字节序 / 数量时由 [`migrateViewTab()`](src/hooks/use-app-state.tsx:80) 补齐，位区域默认格式为 `led`；`migrateViewTab()` 显式构造返回值，因此旧数据里已废弃的 `writeMode` 字段会被自然丢弃。
 
 ## State Management / 状态管理
 

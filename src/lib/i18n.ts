@@ -65,12 +65,6 @@ export const translations = {
     notEnoughRegisters: 'not enough registers',
     wideTypeRequiresRegisters: '32/64-bit types only apply to holding/input registers, not coils.',
 
-    // Write mode (slave equivalent of master's write function code)
-    writeMode: 'Write Mode',
-    writeModeOff: 'Read only',
-    writeModeSingle: 'Single (FC05/06)',
-    writeModeMultiple: 'Multiple (FC15/16)',
-
     // Data display formats
     formatLed: 'Bits (16-bit)',
     formatShort: 'Short (16-bit)',
@@ -209,12 +203,6 @@ export const translations = {
     perRowFormatHint: '逐行类型映射：32 位值占用 2 个寄存器，64 位占用 4 个；被占用的行不可选择。',
     notEnoughRegisters: '寄存器不足',
     wideTypeRequiresRegisters: '32/64位类型仅适用于保持/输入寄存器，不适用于线圈。',
-
-    // 写模式（对应 master 的写功能码选择）
-    writeMode: '写模式',
-    writeModeOff: '只读',
-    writeModeSingle: '单点写 (FC05/06)',
-    writeModeMultiple: '区间写 (FC15/16)',
 
     // 数据显示格式
     formatLed: 'Bits（位）',

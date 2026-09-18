@@ -229,13 +229,13 @@ export function createSlaveMemory(config: SlaveConfig): SlaveMemory {
 // ── View Tab (for register viewer tabs) ──
 
 /**
- * 视图写入模式（等价于 master 的"写功能码"选择）：
- * - `off`      只读视图，数据格不可编辑
- * - `single`   单点写：线圈 FC05 / 保持寄存器 FC06，仅起始地址一行可写
- * - `multiple` 区间写：线圈 FC15 / 保持寄存器 FC16，整段窗口可写
+ * 视图标签：绑定一个从站 + 一块寄存器区域的读取窗口。
+ *
+ * 注意：**没有写入模式字段**。从站是"被写"的一方，界面上的写入是本地
+ * 直接改内存（见 modbus-slave-server.ts 的 writeRegister / writeRange），
+ * 不经过 FC 解析路径，因此"单点写 / 区间写"这类功能码选择在从站侧没有意义，
+ * 由提交时的值数量自动决定。可写性只由区域决定（见 isWritableArea）。
  */
-export type WriteMode = 'off' | 'single' | 'multiple';
-
 export interface RegisterViewTab {
   id: string;
   name: string;
@@ -248,7 +248,6 @@ export interface RegisterViewTab {
   /** 逐行类型映射：分组起始地址 -> 该行的显示格式（覆盖标签默认 displayFormat）。
    *  仅记录分组起始地址；32/64 位类型占用的后续地址不在此表中。 */
   formatOverrides?: Record<number, DataDisplayFormat>;
-  writeMode: WriteMode;
   byteOrder32: ByteOrder32;
   byteOrder64: ByteOrder64;
 }

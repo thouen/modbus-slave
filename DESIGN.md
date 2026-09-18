@@ -92,14 +92,29 @@ Each slave device maintains four independent register areas. Sizes are configura
 
 | Area / 区域 | Type / 类型 | Default Size / 默认大小 | Access / 访问 |
 |---|---|---|---|
-| Coils (FC01/05/15) | Bit | 100 | Read/Write |
-| Discrete Inputs (FC02) | Bit | 100 | Read Only |
-| Holding Registers (FC03/06/16) | 16-bit word | 100 | Read/Write |
-| Input Registers (FC04) | 16-bit word | 100 | Read Only |
+| Coils (FC01/05/15) | Bit | 1000 寄存器（= 16000 个位地址） | Read/Write |
+| Discrete Inputs (FC02) | Bit | 1000 寄存器（= 16000 个位地址） | 协议只读 / 界面可注入 |
+| Holding Registers (FC03/06/16) | 16-bit word | 1000 | Read/Write |
+| Input Registers (FC04) | 16-bit word | 1000 | 协议只读 / 界面可注入 |
 
-Register memory is stored as typed arrays (`Uint16Array` for registers, `Uint8Array` for bits) — **1 byte per bit, not bit-packed**. Protocol limits (`MODBUS_MAX`) are independent of per-slave capacity.
+> ⭐ **单位只有一个：寄存器（= 16 位）**。四个区的 `*Count` 一律表示「**该区的寄存器总数量**」
+> （概念名 `areaTotalRegisters`），位区也按寄存器计 —— 位区 1 个寄存器 = 16 个位地址。
+> 有效地址范围：字区 `[0, N−1]`，位区 `[0, N×16−1]`。
 
-寄存器内存用类型化数组存储（寄存器 `Uint16Array`，位区 `Uint8Array`）——**每个位占 1 字节，并非按位打包**。协议上限（`MODBUS_MAX`）与从站容量彼此独立。
+### Memory Model / 内存模型
+
+四个区**统一用 `Uint16Array`**，**长度一律 = 该区的 `areaTotalRegisters`**（默认 1000 ⇒ 每区 2 KB）。
+
+- 位区（线圈 / 离散输入）**按位打包**在字里（1 字 = 16 个位地址），**不单独建位数组** ——
+  与线协议"FC01/02 响应、FC15 请求本来就按位打包"一致，且省 8 倍内存。
+- ⚠️ **位序**：**字内 bit 0（LSB）= 该字中编号最小的位地址**（与协议"首线圈在字节最低位"一致）。
+  读写一律走 `readPackedBit()` / `writePackedBit()`，**打包细节不越过这一层边界**。
+- 另有一条**逐寄存器的值来源**数组（`Uint8Array`，1 字节/寄存器，`0` = 从未写入），用于界面显示 Q7 来源角标。
+- 协议上限（`MODBUS_MAX`）与从站容量彼此独立；**数组越界 ⇔ 声明范围越界** ⇒ 读越界自然回 `0x02`。
+
+Register memory is stored as typed arrays — **all four areas are `Uint16Array`, and bit areas are bit-packed**
+(1 word = 16 coil addresses), with length = that area's register total. A parallel per-register source array
+(`Uint8Array`) records who wrote each value (`master` / `manual` / `generator`).
 
 ### Slave Address / 从站地址
 
@@ -129,9 +144,9 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 { type: 'start_slave',    payload: { slaveId, config } }
 { type: 'stop_slave',     payload: { slaveId } }
 { type: 'restart_slave',  payload: { slaveId, config } }   // 先停后起，服务端串行执行
-{ type: 'read_registers', payload: { tabId, slaveId, area, startAddress, quantity } }
-{ type: 'write_register', payload: { slaveId, area, address, value } }
-{ type: 'write_registers',payload: { slaveId, area, startAddress, values } }
+{ type: 'read_registers', payload: { tabId, slaveId, area, startRegister, registerCount } }
+{ type: 'write_register', payload: { slaveId, area, registerIndex, value } }
+{ type: 'write_registers',payload: { slaveId, area, startRegister, values } }
 { type: 'ping' }
 
 // Server → Client
@@ -140,18 +155,29 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 { type: 'slave_stopped',      payload: { slaveId } }
 { type: 'slave_error',        payload: { slaveId, message } }
 { type: 'log_entry',          payload: LogEntry }
-{ type: 'read_response',      payload: { tabId, data } }
+{ type: 'read_response',      payload: { tabId, data: [{ address, rawValue, source }] } }
 { type: 'write_response',     payload: { slaveId, success, error? } }  // 失败带 slaveId，前端落到按从站可筛选的错误日志
-{ type: 'register_update',    payload: { slaveId, changes: [{ area, address, value }] } }
+{ type: 'register_update',    payload: { slaveId, changes: [{ area, address, value, source }] } }
 { type: 'error',              payload: { message } }
 { type: 'pong' }
 ```
+
+> ⚠️ **两套单位的接缝**（Q19 / Q20）：
+> - `startRegister` / `registerCount` / `registerIndex` 一律是**寄存器单位**（四个区一致）；
+> - `register_update.changes[].address` 是 **ModBus 地址单位** —— 位区为**位地址**、`value` 为 `0/1`；
+>   由 reducer 一处用 `registerSpanToAddressSpan()` / `bitAddressToRegister()` 归行。
+> - 位区的 `×16` 换算只存在于协议层 `readSnapshot()` / `injectRegister()` 内部，前端不感知。
+
+> ⚠️ `read_registers` / `write_register(s)` **不是协议帧**：它们直接读写内存，`registerCount` 只受该区容量约束，
+> 不受 `MODBUS_MAX` 的单帧上限限制（界面另行按 125 / 123 提示与禁用提交）。
 
 > ⚠️ 命名陷阱：WS 载荷中的 `slaveId` 是**应用内部 id（string）**，而 `SlaveConfig.slaveId` 是 **ModBus 单元号（1–247）**。
 >
 > ⚠️ `slaveId` in the WS payload is the **internal app id (string)**, while `SlaveConfig.slaveId` is the **ModBus unit id (1–247)**.
 
 `register_update` 只包含**实际发生变更**的地址（写入相同值不产生事件），并且一次 PDU 的多个变更合并为一条消息。
+`source` 字段区分写方（`master` 主站 FC / `manual` 界面注入 / `generator` 值生成器），供界面显示来源角标与筛选（Q7）。
+主站写入与手动注入的**日志措辞也区分**（`Master write:` vs `Manual inject:`）。
 
 ## Data Display Formats / 数据显示格式
 
@@ -177,22 +203,31 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 交互语义与 modbus-master 对齐（同样的标签栏 + 内联配置条 + 逐行类型 + 行内编辑写入）。
 
 > 写入侧不照抄 master：从站是"被写"的一方，界面上的写入是**本地直接改内存**
-> （`writeRegister` / `writeRange`，见 [`modbus-slave-server.ts`](src/lib/modbus-slave-server.ts:482)），
+> （`injectRegister` / `injectRange`，见 [`modbus-slave-server.ts`](src/lib/modbus-slave-server.ts:1)），
 > 不经过 `handleRequest()` 的 FC 解析路径。因此这里没有"写功能码 / 写模式"选择。
+>
+> ⭐ **R1：拆开两个概念** ——
+> - **协议可写性**（`isWritableArea()`）：主站能不能通过 FC 改它。只有 `coils` / `holdingRegisters` 可以，**永不放开**。
+> - **模拟器可编辑性**：操作者能不能给内存注入值。**四个区都可以**，不做任何区域门控 ——
+>   因为对主站只读的输入类区域，它的值总得有人产生（真设备里是传感器，模拟器里就是你）。
+>   界面上用 `主站只读 · 仍可手动注入` 徽标把这个区别讲清楚。
 
 | 能力 | 实现 |
 |---|---|
 | 标签绑定 | `RegisterViewTab.slaveId` 绑定**从站实例**（内部 id）；标签栏显示全部标签（跨从站）并带从站名徽标；点击标签同时切换活动从站；无任何从站时禁止新建 |
-| 配置条 | 区域 / 起始地址 / 寄存器数量 / 默认格式 / 字节序（按默认格式条件显示），全部**内联可编辑**；数量上限按区域取 2000（位）/ 125（字） |
-| 读取窗口 | `startAddress` + `quantity` 是标签的连续窗口，同时也是表格渲染行数——用于按地址连续地模拟真实设备的一段数据；`register_update` 增量只补窗口内已缓存的地址 |
+| 配置条 | 区域 / 起始地址 / 寄存器数量 / 默认格式 / 字节序（按默认格式条件显示）+ 值来源筛选，全部**内联可编辑**；数量上限**四个区统一 125**（`MAX_READ_REGISTERS_PER_FRAME`，位区 2000 位 ÷ 16） |
+| 只读提示 | 输入框旁显示换算结果：起始地址旁 `起始位 = startAddress × 16`，数量旁 `位 A ~ B`（**四个区同一套措辞**）—— 让单位统一后的 ×16 **不静默** |
+| 读取窗口 | `startAddress` + `registerCount`（**均为寄存器单位**）是标签的连续窗口，同时也是表格渲染行数；`register_update` 增量只补窗口内已缓存的行 |
 | 逐行类型 | `formatOverrides: Record<address, DataDisplayFormat>`，由 `resolveRegisterLayout()` 计算每行角色：分组起点可改类型，被宽类型占用的后续行显示 `—` 且不可选 |
 | 宽类型跨度 | 32 位占 2 个寄存器、64 位占 4 个；空间不足或位区域时该类型在选项中禁用（`formatFitsAt()`） |
-| 位区域渲染 | `coils` / `discreteInputs` 每行 1 bit，格式化值列为 0/1 开关（可写区域点击即改草稿） |
-| 字区域渲染 | `led` 为 16 位可点击位开关组，其余格式为文本 |
-| 写入权限 | **只由区域决定**：`coils` / `holdingRegisters` 可写，`discreteInputs` / `inputRegisters` 只读（`isWritableArea()`）。界面写入不引入任何 FC 语义 |
+| ⭐ 行 = 寄存器 | **四个区视图完全同构**：1 行 = 1 寄存器。位区 1 行 = 16 个位地址，地址列旁附 `位 A~B` 作辅助只读显示（Q20：地址一律按寄存器编号显示） |
+| 位区域渲染 | `coils` / `discreteInputs` 一行一个寄存器，格式化值为 **16 位 LED 开关组**（该寄存器打包的位）；原始 HEX/DEC 列显示打包后的字 |
+| 字区域渲染 | `led` 同样为 16 位可点击位开关组，其余格式为文本 |
+| 写入权限 | **不看区域**（R1）：只要从站运行中，四个区都能编辑与提交。`isWritableArea()` 只用于显示"主站只读"徽标 |
+| 值来源（Q7） | 每行一个来源角标（`master` 蓝 / `manual` 琥珀 / `generator` 紫；从未写入显示 `—`），配置条可按来源筛选（不匹配的行**变淡**而不隐藏，保持窗口连续） |
 | 单点 / 区间 | 无需用户选择，按提交的值数量自动决定：1 个值走 `write_register`，多个值走 `write_registers`。两者最终都落到同一个内存写入函数，仅日志粒度不同——这与真实主站"写一个点、写一段用不同写功能码"的行为一致 |
-| 写入流程 | 可写区域的数据格直接编辑 → 暂存草稿（琥珀色高亮 + 行首圆点）→「写入」整段提交（未编辑行回填当前原值）→ 服务端 `write_response` 回执 + `register_update` 增量刷新视图 |
-| 失败可见性 | 只读区域 / 越界写入由服务端回 `success:false` + 原因，前端写入按从站筛选的错误日志 |
+| 写入流程 | 数据格直接编辑 → 暂存草稿（琥珀色高亮 + 行首圆点）→「写入」整段提交（未编辑行回填当前原值）→ 服务端 `write_response` 回执 + `register_update` 增量刷新视图 |
+| 失败可见性 | 越界写入由服务端回 `success:false` + 原因，前端写入按从站筛选的错误日志；窗口越界 / 超单帧写上限（>123）则**就地提示并禁用提交** |
 
 > 迁移：旧持久化标签缺少 `formatOverrides` / 字节序 / 数量时由 [`migrateViewTab()`](src/hooks/use-app-state.tsx:80) 补齐，位区域默认格式为 `led`；`migrateViewTab()` 显式构造返回值，因此旧数据里已废弃的 `writeMode` 字段会被自然丢弃。
 

@@ -6,6 +6,8 @@ import { useI18n } from '@/hooks/use-i18n';
 import { useAppState } from '@/hooks/use-app-state';
 import { useModbusWs } from '@/hooks/use-modbus-ws';
 import {
+  MAX_READ_REGISTERS_PER_FRAME,
+  MAX_WRITE_REGISTERS_PER_FRAME,
   isBitArea,
   isWritableArea,
   isWordArea,
@@ -15,6 +17,7 @@ import {
   type RegisterArea,
   type RegisterData,
   type RegisterViewTab,
+  type ValueSource,
 } from '@/lib/modbus-types';
 import {
   encodeValueToRegisters,
@@ -81,10 +84,20 @@ function defaultFormatForArea(area: RegisterArea, current: DataDisplayFormat): D
   return current === 'led' ? 'hex' : current;
 }
 
-/** 读窗口上限：位区域 2000，寄存器区域 125（与协议读上限一致） */
-function maxQuantityForArea(area: RegisterArea): number {
-  return isBitArea(area) ? 2000 : 125;
-}
+/**
+ * 读窗口上限（Q19：**四个区统一**）。
+ *
+ * 由位区上限 ÷16 推导：`2000 / 16 = 125` ⇒ 位区不再单独放宽（旧代码这里是 2000，
+ * 那是"地址个数"口径；单位统一为寄存器后位区也是 125）。
+ */
+const quantityMax = MAX_READ_REGISTERS_PER_FRAME;
+
+/** 来源角标：颜色区分写方（Q7），文案走 i18n */
+const SOURCE_STYLE: Record<ValueSource, { key: 'sourceMaster' | 'sourceManual' | 'sourceGenerator'; cls: string }> = {
+  master: { key: 'sourceMaster', cls: 'bg-sky-500/15 text-sky-400' },
+  manual: { key: 'sourceManual', cls: 'bg-amber-500/15 text-amber-400' },
+  generator: { key: 'sourceGenerator', cls: 'bg-fuchsia-500/15 text-fuchsia-400' },
+};
 
 /** 生成默认标签名称：区域 @起始地址 */
 function generateTabName(areaLabel: string, startAddress: number): string {
@@ -138,10 +151,10 @@ export function RegisterViewer() {
   const [writeDraft, setWriteDraft] = useState<Map<number, number>>(new Map());
   const [refreshing, setRefreshing] = useState(false);
 
-  /** 读取标签窗口 */
+  /** 读取标签窗口（⭐ 寄存器单位，Q19 / Q20） */
   const doRead = useCallback(
     (tab: RegisterViewTab) => {
-      readRegisters(tab.id, tab.slaveId, tab.area, tab.startAddress, tab.quantity);
+      readRegisters(tab.id, tab.slaveId, tab.area, tab.startAddress, tab.registerCount);
     },
     [readRegisters],
   );
@@ -178,14 +191,14 @@ export function RegisterViewer() {
       slaveId: slave.id,
       area,
       startAddress,
-      quantity: 20,
+      registerCount: 20,
       displayFormat: 'hex',
       byteOrder32: slave.byteOrder32,
       byteOrder64: slave.byteOrder64,
     };
     dispatch({ type: 'ADD_VIEW_TAB', payload: tab });
     // 新标签尚未进入 state，直接用其配置发起一次读取
-    readRegisters(tab.id, tab.slaveId, tab.area, tab.startAddress, tab.quantity);
+    readRegisters(tab.id, tab.slaveId, tab.area, tab.startAddress, tab.registerCount);
   }, [activeSlaveId, slaves, dispatch, readRegisters, t]);
 
   /** 关闭标签 */
@@ -213,11 +226,14 @@ export function RegisterViewer() {
     [editingName, updateTab],
   );
 
-  /** 行内编辑提交：暂存为草稿，不立即发送 */
+  /**
+   * 行内编辑提交：暂存为草稿，不立即发送。
+   * ⚠️ `registerIndex` 是**寄存器序号**（Q20）；位区一行 = 1 寄存器 = 打包后的 16 位字。
+   */
   const commitCellEdit = useCallback(
-    (tab: RegisterViewTab, address: number, raw: string, format: DataDisplayFormat, span: number) => {
+    (tab: RegisterViewTab, registerIndex: number, raw: string, format: DataDisplayFormat, span: number) => {
       if (span > 1) {
-        // 宽类型（32/64 位）：解析为格式化值后拆分回 span 个 16 位原始值
+        // 宽类型（32/64 位）：解析为格式化值后拆分回 span 个 16 位原始值（仅字区）
         const regs = encodeValueToRegisters(
           parseDisplayValue(raw, format),
           format,
@@ -230,14 +246,14 @@ export function RegisterViewer() {
         }
         setWriteDraft((prev) => {
           const next = new Map(prev);
-          for (let i = 0; i < span; i++) next.set(address + i, regs[i]);
+          for (let i = 0; i < span; i++) next.set(registerIndex + i, regs[i]);
           return next;
         });
       } else {
         const num = parseDisplayValue(raw, format);
         setWriteDraft((prev) => {
           const next = new Map(prev);
-          next.set(address, num);
+          next.set(registerIndex, num);
           return next;
         });
       }
@@ -246,40 +262,34 @@ export function RegisterViewer() {
     [],
   );
 
-  /** 位区域直接切换草稿值（无需文本输入） */
-  const toggleBitDraft = useCallback((address: number, current: number) => {
-    setWriteDraft((prev) => {
-      const next = new Map(prev);
-      next.set(address, current ? 0 : 1);
-      return next;
-    });
-  }, []);
-
   /**
    * 整段批量提交：草稿覆盖 + 未编辑行回填原值。
    *
    * 单点写 / 区间写无需用户选择——按本次提交的值数量自动决定：1 个值用
    * `writeRegister`，多个值用 `writeRegisters`。这与真实主站的行为一致
-   * （写一个点、写一段分别用对应的写功能码），而在从站侧两者最终都落到
-   * 同一个内存写入函数。
+   * （写一个点、写一段分别用对应的写功能码），而在从站侧两者最终都落到同一个内存写入。
+   *
+   * ⭐ **不再按区域门控**（R1）：四个区都能被操作者注入值 ——
+   * 从站是被写的一方，输入寄存器这类"对主站只读"的区域，其值总得有人产生。
+   * `isWritableArea()` 只用于提示"主站能不能通过 FC 改它"，与这里的可编辑性无关。
    */
   const submitWrite = useCallback(
     (tab: RegisterViewTab) => {
-      if (!isRunning || !isWritableArea(tab.area)) return;
+      if (!isRunning) return;
       const data = registerData[tab.id] ?? [];
-      const count = Math.max(1, tab.quantity);
+      const count = Math.max(1, tab.registerCount);
       const values: number[] = [];
       const nextDraft = new Map(writeDraft);
       for (let i = 0; i < count; i++) {
-        const addr = tab.startAddress + i;
-        const edited = writeDraft.get(addr);
+        const registerIndex = tab.startAddress + i;
+        const edited = writeDraft.get(registerIndex);
         if (edited !== undefined) {
           values.push(edited);
         } else {
-          const row = data.find((d) => d.address === addr);
+          const row = data.find((d) => d.address === registerIndex);
           values.push(row ? row.rawValue : 0);
         }
-        nextDraft.delete(addr);
+        nextDraft.delete(registerIndex);
       }
       if (values.length === 1) {
         writeRegister(tab.slaveId, tab.area, tab.startAddress, values[0]);
@@ -305,17 +315,17 @@ export function RegisterViewer() {
   const activeTabSlaveId = activeTab?.slaveId ?? null;
   const activeTabArea = activeTab?.area ?? null;
   const activeTabStart = activeTab?.startAddress ?? 0;
-  const activeTabQuantity = activeTab?.quantity ?? 0;
+  const activeTabRegisterCount = activeTab?.registerCount ?? 0;
   useEffect(() => {
     if (!activeTabItemId || !activeTabSlaveId || !activeTabArea) return;
     if (slaveStatus[activeTabSlaveId] !== 'running') return;
-    readRegisters(activeTabItemId, activeTabSlaveId, activeTabArea, activeTabStart, activeTabQuantity);
+    readRegisters(activeTabItemId, activeTabSlaveId, activeTabArea, activeTabStart, activeTabRegisterCount);
   }, [
     activeTabItemId,
     activeTabSlaveId,
     activeTabArea,
     activeTabStart,
-    activeTabQuantity,
+    activeTabRegisterCount,
     slaveStatus,
     readRegisters,
   ]);
@@ -328,9 +338,40 @@ export function RegisterViewer() {
     setEditingTabId(null);
   }, [activeTabItemId]);
 
-  const quantityMax = activeTab ? maxQuantityForArea(activeTab.area) : 125;
-  // 写入能力只由区域决定：线圈 / 保持寄存器可写，离散输入 / 输入寄存器只读
-  const canWrite = activeTab ? isRunning && isWritableArea(activeTab.area) : false;
+  // 可写性只由"从站是否运行"决定：四个区对操作者一律可注入（R1）
+  const canWrite = activeTab ? isRunning : false;
+  // 主站能否通过功能码改这个区 —— 只用于提示，不参与界面门控（R1 的概念拆分）
+  const masterCanWriteArea = activeTab ? isWritableArea(activeTab.area) : false;
+
+  /** 该区总寄存器数量（用于窗口越界判据，四区同一套） */
+  const boundSlaveAreaTotal = (() => {
+    if (!activeTab || !boundSlave) return Number.POSITIVE_INFINITY;
+    switch (activeTab.area) {
+      case 'coils': return boundSlave.coilCount;
+      case 'discreteInputs': return boundSlave.discreteInputCount;
+      case 'holdingRegisters': return boundSlave.holdingRegisterCount;
+      case 'inputRegisters': return boundSlave.inputRegisterCount;
+    }
+  })();
+
+  // 越界判据（Q19：四区统一）：startAddress + registerCount > 该区 areaTotalRegisters
+  const windowOutOfRange =
+    !!activeTab && activeTab.startAddress + activeTab.registerCount > boundSlaveAreaTotal;
+  // 写上限（Q19：四区统一 123 寄存器）；读上限恒为 125，输入框已 clamp
+  const writeTooMany = !!activeTab && activeTab.registerCount > MAX_WRITE_REGISTERS_PER_FRAME;
+
+  /** 只读提示：该寄存器窗口覆盖的**位范围**（Q20 的"辅助只读"） */
+  const windowBitRange = activeTab
+    ? `${t('bits')} ${activeTab.startAddress * 16} ~ ${(activeTab.startAddress + activeTab.registerCount) * 16 - 1}`
+    : '';
+
+  // ⭐ Q7：值来源筛选（dim 非匹配行，不改动表格结构 —— 行恒等于窗口内的寄存器）
+  const [sourceFilter, setSourceFilter] = useState<'all' | ValueSource | 'none'>('all');
+  const matchesSourceFilter = (row: RegisterData) => {
+    if (sourceFilter === 'all') return true;
+    if (sourceFilter === 'none') return !row.source;
+    return row.source === sourceFilter;
+  };
 
   return (
     <div className="flex h-full min-w-0 flex-col">
@@ -438,9 +479,19 @@ export function RegisterViewer() {
             </Select>
           </label>
 
+          {/* ⭐ R1：把"协议可写"与"界面可编辑"两个概念在界面上说清楚 */}
+          {!masterCanWriteArea && (
+            <span
+              className="rounded border border-border/40 bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+              title={t('masterReadOnlyHint')}
+            >
+              {t('masterReadOnlyHint')}
+            </span>
+          )}
+
           <span className="h-4 w-px bg-border/30" />
 
-          {/* 起始地址 */}
+          {/* 起始地址（⭐ 寄存器单位；旁挂只读"起始位"提示，Q20） */}
           <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             {t('startAddress')}
             <Input
@@ -451,26 +502,42 @@ export function RegisterViewer() {
               onChange={(e) => updateTab(activeTab.id, { startAddress: Number(e.target.value) || 0 })}
               className="h-6 w-20 border-border/40 bg-background px-2 text-xs"
             />
+            <span className="text-[9px] text-muted-foreground/60">
+              {t('startBit')} {activeTab.startAddress * 16}
+            </span>
           </label>
 
           <span className="h-4 w-px bg-border/30" />
 
-          {/* 寄存器数量 */}
+          {/* 寄存器数量（⭐ 寄存器单位，四区同一标签；旁挂位范围提示） */}
           <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             {t('registerCount')}
             <Input
               type="number"
               min={1}
               max={quantityMax}
-              value={activeTab.quantity}
+              value={activeTab.registerCount}
               onChange={(e) =>
                 updateTab(activeTab.id, {
-                  quantity: Math.min(quantityMax, Math.max(1, Number(e.target.value) || 1)),
+                  registerCount: Math.min(quantityMax, Math.max(1, Number(e.target.value) || 1)),
                 })
               }
               className="h-6 w-16 border-border/40 bg-background px-2 text-xs"
             />
+            <span className="text-[9px] text-muted-foreground/60">{windowBitRange}</span>
           </label>
+
+          {/* 窗口越界 / 超单帧写上限 —— 都是"提示 + 禁用提交"，不是静默截断 */}
+          {windowOutOfRange && (
+            <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400">
+              {t('windowOutOfRange')}
+            </span>
+          )}
+          {writeTooMany && (
+            <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400">
+              {t('writeTooMany')}
+            </span>
+          )}
 
           {/* 默认显示格式（可被表格逐行覆盖） */}
           <span className="hidden h-4 w-px bg-border/30 md:inline-block" />
@@ -549,34 +616,53 @@ export function RegisterViewer() {
             </label>
           )}
 
+          {/* 值来源筛选（Q7）：dim 非匹配行 —— 不改变行结构（行恒等于窗口内的寄存器） */}
+          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            {t('source')}
+            <Select
+              value={sourceFilter}
+              onValueChange={(v) => setSourceFilter(v as typeof sourceFilter)}
+            >
+              <SelectTrigger className="h-6 w-24 border-border/40 bg-background px-2 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-xs">{t('sourceAll')}</SelectItem>
+                <SelectItem value="master" className="text-xs">{t('sourceMaster')}</SelectItem>
+                <SelectItem value="manual" className="text-xs">{t('sourceManual')}</SelectItem>
+                <SelectItem value="generator" className="text-xs">{t('sourceGenerator')}</SelectItem>
+                <SelectItem value="none" className="text-xs">{t('sourceNone')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+
           {/* 操作按钮 */}
           <div className="ml-auto flex items-center gap-1.5">
             <Button
               variant="outline"
               size="sm"
-              disabled={!isRunning}
+              disabled={!isRunning || windowOutOfRange}
               onClick={handleRead}
               className="h-7 border-primary/30 bg-primary/10 px-2.5 text-xs text-primary hover:bg-primary/20 hover:text-primary"
             >
               <RefreshCw className={`mr-1 h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
               {t('read')}
             </Button>
-            {isWritableArea(activeTab.area) && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!canWrite}
-                onClick={() => submitWrite(activeTab)}
-                className={`h-7 border-success/40 px-2.5 text-xs ${
-                  writeDraft.size > 0
-                    ? 'bg-success/15 text-success hover:bg-success/25'
-                    : 'border-border/40 bg-surface-container text-muted-foreground hover:bg-surface-container/80'
-                }`}
-              >
-                <Upload className="mr-1 h-3 w-3" />
-                {t('write')}
-              </Button>
-            )}
+            {/* ⭐ R1：不再按区域门控 —— 四个区都可手动注入 */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!canWrite || windowOutOfRange || writeTooMany}
+              onClick={() => submitWrite(activeTab)}
+              className={`h-7 border-success/40 px-2.5 text-xs ${
+                writeDraft.size > 0
+                  ? 'bg-success/15 text-success hover:bg-success/25'
+                  : 'border-border/40 bg-surface-container text-muted-foreground hover:bg-surface-container/80'
+              }`}
+            >
+              <Upload className="mr-1 h-3 w-3" />
+              {t('write')}
+            </Button>
             {!isRunning && (
               <Badge variant="outline" className="border-border/40 px-2 py-0.5 text-[10px]">
                 {t('stopped')}
@@ -592,7 +678,6 @@ export function RegisterViewer() {
           tab={activeTab}
           data={registerData[activeTab.id] ?? []}
           writeDraft={writeDraft}
-          onToggleBit={toggleBitDraft}
           onUpdate={updateTab}
           editingCell={editingCell}
           setEditingCell={setEditingCell}
@@ -601,6 +686,7 @@ export function RegisterViewer() {
           onCommitCellEdit={commitCellEdit}
           editingFormatRow={editingFormatRow}
           setEditingFormatRow={setEditingFormatRow}
+          matchesSourceFilter={matchesSourceFilter}
           emptyHint={
             slaveStatus[activeTab.slaveId] === 'running' ? t('noDataHint') : t('slaveStoppedHint')
           }
@@ -667,7 +753,6 @@ function DataTable({
   tab,
   data,
   writeDraft,
-  onToggleBit,
   onUpdate,
   editingCell,
   setEditingCell,
@@ -677,11 +762,12 @@ function DataTable({
   editingFormatRow,
   setEditingFormatRow,
   emptyHint,
+  matchesSourceFilter,
 }: {
   tab: RegisterViewTab;
   data: RegisterData[];
+  /** ⚠️ key = **寄存器序号**（Q20） */
   writeDraft: Map<number, number>;
-  onToggleBit: (address: number, current: number) => void;
   onUpdate: (tabId: string, updates: Partial<RegisterViewTab>) => void;
   editingCell: string | null;
   setEditingCell: (key: string | null) => void;
@@ -689,7 +775,7 @@ function DataTable({
   setCellValue: (value: string) => void;
   onCommitCellEdit: (
     tab: RegisterViewTab,
-    address: number,
+    registerIndex: number,
     raw: string,
     format: DataDisplayFormat,
     span: number,
@@ -697,13 +783,14 @@ function DataTable({
   editingFormatRow: string | null;
   setEditingFormatRow: (address: string | null) => void;
   emptyHint: string;
+  matchesSourceFilter: (row: RegisterData) => boolean;
 }) {
   const { t } = useI18n();
   const bitArea = isBitArea(tab.area);
   const wordArea = isWordArea(tab.area);
-  // 可写性只看区域，渲染行数恒等于标签的 quantity（用于模拟真实设备的连续数据窗口）
-  const writable = isWritableArea(tab.area);
-  const rowCount = Math.max(1, tab.quantity);
+  // ⭐ 行 = 寄存器（Q20）：四个区视图同构 —— 位区 1 行 = 1 寄存器 = 16 个位地址。
+  // 可编辑性**不再看区域**（R1）：四个区都能被操作者注入值。
+  const rowCount = Math.max(1, tab.registerCount);
 
   const rows: RegisterData[] = Array.from({ length: rowCount }, (_, i) => {
     const address = tab.startAddress + i;
@@ -743,6 +830,7 @@ function DataTable({
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">
                 {t('formattedValue')}
               </th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('source')}</th>
             </tr>
           </thead>
           <tbody>
@@ -755,10 +843,12 @@ function DataTable({
               const groupFits = res?.fits ?? true;
               const groupSpan = res?.span ?? 1;
               const format = res?.format ?? tab.displayFormat;
-              // 仅分组起点可编辑；纯展示草稿不依赖从站是否运行，提交时才要求运行中
-              const canEdit = isGroupStart && writable;
+              // 仅分组起点可编辑；**不看区域**（R1）。纯展示草稿不依赖从站是否运行，提交时才要求运行中
+              const canEdit = isGroupStart;
               const isDrafted = writeDraft.has(item.address);
               const draftValue = writeDraft.get(item.address);
+              // Q7：来源筛选只 dim 行，不隐藏 —— 行恒等于窗口内的寄存器
+              const dimmed = !matchesSourceFilter(item);
               const displayValue =
                 isGroupStart && groupFits
                   ? formatRegisterValue(rows, index, format, tab.byteOrder32, tab.byteOrder64)
@@ -784,22 +874,23 @@ function DataTable({
                     isDrafted
                       ? 'bg-amber-500/[0.07]'
                       : 'odd:bg-surface/40 even:bg-transparent hover:bg-surface-container/50'
-                  }`}
+                  } ${dimmed ? 'opacity-30' : ''}`}
                 >
-                  {/* 地址 */}
-                  <td className="w-18 px-3 py-1.5 font-mono text-[11px] font-semibold">
+                  {/* 地址：⭐ 寄存器序号（Q20）；位区旁挂对应的位范围作"辅助只读"显示 */}
+                  <td className="w-24 px-3 py-1.5 font-mono text-[11px] font-semibold">
                     {isDrafted && (
                       <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle" />
                     )}
                     {item.address}
+                    {bitArea && (
+                      <span className="mt-0.5 block text-[9px] font-normal leading-none text-muted-foreground/50">
+                        {t('bits')} {item.address * 16}~{item.address * 16 + 15}
+                      </span>
+                    )}
                   </td>
-                  {/* 原始 HEX */}
+                  {/* 原始 HEX（位区 = 该寄存器**按位打包后的 16 位字**） */}
                   <td className="w-24 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
-                    {bitArea
-                      ? item.rawValue
-                        ? '1'
-                        : '0'
-                      : item.rawValue.toString(16).toUpperCase().padStart(4, '0')}
+                    {item.rawValue.toString(16).toUpperCase().padStart(4, '0')}
                   </td>
                   {/* 原始 DEC */}
                   <td className="w-24 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
@@ -872,26 +963,11 @@ function DataTable({
                       </Badge>
                     )}
                   </td>
-                  {/* 格式化值（行内编辑；位区域为开关，led 为位开关组） */}
+                  {/* 格式化值（行内编辑）。
+                      ⭐ 位区与字区同一套：一行 = 一个寄存器；`led` 格式渲染该寄存器的 16 个位，
+                      不再有"单个 0/1 按钮"的位-行特例（Q20：四区视图同构）。 */}
                   <td className="w-48 px-3 py-1.5">
-                    {bitArea ? (
-                      <button
-                        type="button"
-                        disabled={!canEdit}
-                        onClick={() =>
-                          onToggleBit(item.address, draftValue ?? item.rawValue)
-                        }
-                        className={`rounded border px-2 py-0.5 font-mono text-[10px] transition-colors ${
-                          (draftValue ?? item.rawValue)
-                            ? 'border-success/40 bg-success/15 text-success'
-                            : 'border-border/40 bg-foreground/5 text-muted-foreground'
-                        } ${canEdit ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-70'} ${
-                          isDrafted ? 'ring-1 ring-amber-400/60' : ''
-                        }`}
-                      >
-                        {(draftValue ?? item.rawValue) ? '1' : '0'}
-                      </button>
-                    ) : format === 'led' ? (
+                    {format === 'led' ? (
                       <LedBits
                         value={draftValue ?? item.rawValue}
                         editable={canEdit}
@@ -932,6 +1008,18 @@ function DataTable({
                             ? formatDraftValue(draftValue, format)
                             : displayValue}
                       </span>
+                    )}
+                  </td>
+                  {/* 值来源（Q7）：角标 + 颜色区分写方；从未写入过显示 — */}
+                  <td className="w-20 px-3 py-1.5">
+                    {item.source ? (
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${SOURCE_STYLE[item.source].cls}`}
+                      >
+                        {t(SOURCE_STYLE[item.source].key)}
+                      </span>
+                    ) : (
+                      <span className="font-mono text-[10px] text-muted-foreground/40">—</span>
                     )}
                   </td>
                 </tr>

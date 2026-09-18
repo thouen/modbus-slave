@@ -30,7 +30,7 @@ function makeTab(id: string, slaveId: string, overrides: Partial<RegisterViewTab
     slaveId,
     area: 'holdingRegisters',
     startAddress: 0,
-    quantity: 10,
+    registerCount: 10,
     displayFormat: 'hex',
     byteOrder32: 'ABCD',
     byteOrder64: 'ABCDEFGH',
@@ -55,10 +55,10 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
 // ── PATCH_REGISTER_DATA ──────────────────────────────────────────
 
 describe('PATCH_REGISTER_DATA', () => {
-  it('只更新窗口内且已缓存的地址', () => {
+  it('只更新窗口内且已缓存的地址，并写入值来源（Q7）', () => {
     const state = baseState({
       slaves: [makeSlave('s1')],
-      viewTabs: [makeTab('t1', 's1', { startAddress: 0, quantity: 4 })],
+      viewTabs: [makeTab('t1', 's1', { startAddress: 0, registerCount: 4 })],
       registerData: {
         t1: [
           { address: 0, rawValue: 0 },
@@ -74,9 +74,9 @@ describe('PATCH_REGISTER_DATA', () => {
       payload: {
         slaveId: 's1',
         changes: [
-          { area: 'holdingRegisters', address: 2, value: 42 },
-          { area: 'holdingRegisters', address: 99, value: 1 }, // 窗口外
-          { area: 'coils', address: 1, value: 1 }, // 区域不符
+          { area: 'holdingRegisters', address: 2, value: 42, source: 'master' },
+          { area: 'holdingRegisters', address: 99, value: 1, source: 'master' }, // 窗口外
+          { area: 'coils', address: 1, value: 1, source: 'master' }, // 区域不符
         ],
       },
     });
@@ -84,9 +84,57 @@ describe('PATCH_REGISTER_DATA', () => {
     assert.deepEqual(next.registerData.t1, [
       { address: 0, rawValue: 0 },
       { address: 1, rawValue: 0 },
-      { address: 2, rawValue: 42 },
+      { address: 2, rawValue: 42, source: 'master' },
       { address: 3, rawValue: 0 },
     ]);
+  });
+
+  it('位区增量按「位地址 → 寄存器行」归位（Q19 两套单位的接缝）', () => {
+    // 位区：1 行 = 1 寄存器 = 16 个位地址；startAddress 也是寄存器单位
+    const state = baseState({
+      slaves: [makeSlave('s1')],
+      viewTabs: [makeTab('t1', 's1', { area: 'coils', startAddress: 1, registerCount: 2 })],
+      registerData: {
+        t1: [
+          { address: 1, rawValue: 0b0000 },
+          { address: 2, rawValue: 0b0000 },
+        ],
+      },
+    });
+
+    const next = appReducer(state, {
+      type: 'PATCH_REGISTER_DATA',
+      payload: {
+        slaveId: 's1',
+        // 寄存器 1 覆盖位地址 16~31；写 bit 17（= 寄存器 1 的位序号 1）
+        changes: [
+          { area: 'coils', address: 17, value: 1, source: 'master' },
+          { area: 'coils', address: 33, value: 1, source: 'manual' }, // 寄存器 2 的 bit 1
+        ],
+      },
+    });
+
+    assert.equal(next.registerData.t1[0].rawValue, 0b10);
+    assert.equal(next.registerData.t1[0].source, 'master');
+    assert.equal(next.registerData.t1[1].rawValue, 0b10);
+    assert.equal(next.registerData.t1[1].source, 'manual');
+  });
+
+  it('位区：窗口外的位地址不落行', () => {
+    const state = baseState({
+      slaves: [makeSlave('s1')],
+      viewTabs: [makeTab('t1', 's1', { area: 'coils', startAddress: 0, registerCount: 1 })],
+      registerData: { t1: [{ address: 0, rawValue: 0 }] },
+    });
+    const next = appReducer(state, {
+      type: 'PATCH_REGISTER_DATA',
+      payload: {
+        slaveId: 's1',
+        // 寄存器 1 的行不在窗口内（窗口只有寄存器 0 = 位 0~15）
+        changes: [{ area: 'coils', address: 16, value: 1, source: 'master' }],
+      },
+    });
+    assert.equal(next, state);
   });
 
   it('未读取过的标签页不做局部补丁（避免半真半假）', () => {
@@ -97,7 +145,7 @@ describe('PATCH_REGISTER_DATA', () => {
     });
     const next = appReducer(state, {
       type: 'PATCH_REGISTER_DATA',
-      payload: { slaveId: 's1', changes: [{ area: 'holdingRegisters', address: 0, value: 7 }] },
+      payload: { slaveId: 's1', changes: [{ area: 'holdingRegisters', address: 0, value: 7, source: 'master' }] },
     });
     assert.equal(next, state);
   });
@@ -106,13 +154,33 @@ describe('PATCH_REGISTER_DATA', () => {
     const state = baseState({
       slaves: [makeSlave('s1')],
       viewTabs: [makeTab('t1', 's1')],
-      registerData: { t1: [{ address: 0, rawValue: 5 }] },
+      registerData: { t1: [{ address: 0, rawValue: 5, source: 'master' }] },
     });
     const next = appReducer(state, {
       type: 'PATCH_REGISTER_DATA',
-      payload: { slaveId: 's1', changes: [{ area: 'holdingRegisters', address: 0, value: 5 }] },
+      payload: {
+        slaveId: 's1',
+        changes: [{ area: 'holdingRegisters', address: 0, value: 5, source: 'master' }],
+      },
     });
     assert.equal(next, state);
+  });
+
+  it('只有来源变化时也要更新（值相同但写方不同）', () => {
+    const state = baseState({
+      slaves: [makeSlave('s1')],
+      viewTabs: [makeTab('t1', 's1')],
+      registerData: { t1: [{ address: 0, rawValue: 5, source: 'manual' }] },
+    });
+    const next = appReducer(state, {
+      type: 'PATCH_REGISTER_DATA',
+      payload: {
+        slaveId: 's1',
+        changes: [{ area: 'holdingRegisters', address: 0, value: 5, source: 'master' }],
+      },
+    });
+    assert.equal(next.registerData.t1[0].source, 'master');
+    assert.equal(next.registerData.t1[0].rawValue, 5);
   });
 
   it('不修改其它从站的缓存', () => {
@@ -123,7 +191,7 @@ describe('PATCH_REGISTER_DATA', () => {
     });
     const next = appReducer(state, {
       type: 'PATCH_REGISTER_DATA',
-      payload: { slaveId: 's2', changes: [{ area: 'holdingRegisters', address: 0, value: 9 }] },
+      payload: { slaveId: 's2', changes: [{ area: 'holdingRegisters', address: 0, value: 9, source: 'master' }] },
     });
     assert.equal(next.registerData.t1[0].rawValue, 0);
     assert.equal(next.registerData.t2[0].rawValue, 9);
@@ -243,9 +311,21 @@ describe('视图标签迁移与绑定', () => {
     assert.equal(migrated.id, 't1');
     assert.equal(migrated.area, 'holdingRegisters');
     assert.equal(migrated.formatOverrides, undefined);
-    assert.equal(migrated.quantity, 20);
+    assert.equal(migrated.registerCount, 20);
     assert.equal(migrated.byteOrder32, 'ABCD');
     assert.equal(migrated.byteOrder64, 'ABCDEFGH');
+  });
+
+  it('migrateViewTab 把旧 quantity 迁到 registerCount，并夹进 [1, 125]（Q19 单位变更）', () => {
+    assert.equal(migrateViewTab({ id: 't1', quantity: 8 }).registerCount, 8);
+    // 旧位区标签的数量按"地址个数"计，可能远超寄存器口径的单帧上限 125
+    assert.equal(migrateViewTab({ id: 't2', area: 'coils', quantity: 2000 }).registerCount, 125);
+    assert.equal(migrateViewTab({ id: 't3', quantity: 0 }).registerCount, 1);
+    // 已按新字段写过的值优先，不受旧 quantity 干扰
+    assert.equal(
+      migrateViewTab({ id: 't4', quantity: 2000, registerCount: 30 }).registerCount,
+      30,
+    );
   });
 
   it('migrateViewTab 位区域默认 led，并保留已有字段', () => {

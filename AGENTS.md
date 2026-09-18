@@ -64,16 +64,21 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 
 | 字段 | 语义 |
 |---|---|
-| `area` | 数据区域：`coils` / `discreteInputs` / `holdingRegisters` / `inputRegisters`，同时决定可写性 |
-| `startAddress` / `quantity` | 读取窗口（`quantity` 也是表格渲染行数，用于模拟真实设备的连续数据段） |
+| `area` | 数据区域：`coils` / `discreteInputs` / `holdingRegisters` / `inputRegisters`。⚠️ **不决定可编辑性**（见下） |
+| `startAddress` / `registerCount` | 读取窗口，⭐**均为「寄存器」单位**（Q19/Q20）。`registerCount` 也是表格渲染行数 —— **1 行 = 1 寄存器**，四个区视图同构（位区 1 行 = 16 个位地址） |
 | `displayFormat` | 标签级默认显示格式（可被逐行覆盖） |
-| `formatOverrides` | 逐行类型映射：`Record<address, DataDisplayFormat>`，仅记录分组起始地址 |
+| `formatOverrides` | 逐行类型映射：`Record<address, DataDisplayFormat>`，仅记录分组起始地址（key = 寄存器序号） |
 
-- **没有写入模式字段。** 从站是"被写"的一方，界面上的写入走 `writeRegister` / `writeRange` **直接改内存**，不经过 `handleRequest()` 的 FC 解析路径，所以"单点写 / 区间写（FC05/06 vs FC15/16）"这类选择在从站侧没有意义，已移除。提交时按值的数量自动决定调用哪个接口。
-- 可写性**只由区域决定**：线圈 / 保持寄存器可写，离散输入 / 输入寄存器只读；接口层 `writeRegister` 也会拒绝只读区域。
+- **没有写入模式字段。** 从站是"被写"的一方，界面上的写入走 `injectRegister` / `injectRange` **直接改内存**，不经过 `handleRequest()` 的 FC 解析路径，所以"单点写 / 区间写（FC05/06 vs FC15/16）"这类选择在从站侧没有意义，已移除。提交时按值的数量自动决定调用哪个接口。
+- ⭐ **可编辑性不看区域**（R1）：四个区都能被操作者注入值，只要求从站运行中。
+  **协议可写性**（`isWritableArea()`：只有线圈 / 保持寄存器）是**另一个概念**，仅用于界面提示"主站只读 · 仍可手动注入"，
+  以及约束主站 FC 路径 —— 放开它就不是 ModBus 了。
+- ⭐ **值来源（Q7）**：内存逐寄存器记 `source`（`master` / `manual` / `generator`），
+  表格有来源角标 + 可按来源筛选；日志措辞区分（`Master write:` vs `Manual inject:`）。
 - 行内编辑只写"草稿"，点击「写入」才整段提交；未编辑行回填当前原值，避免部分覆盖。
 - 写入后不主动轮询：视图由服务端 `register_update` 精确增量刷新。
 - 新增字段必须提供迁移缺省（见 `migrateViewTab()`），否则老用户的 localStorage 标签会缺字段。
+  ⚠️ 改名/改单位的字段要做**单位换算或收敛**，别直接搬旧值（如 `quantity` → `registerCount` 需夹到单帧上限）。
 
 ## Development Workflow / 开发工作流
 

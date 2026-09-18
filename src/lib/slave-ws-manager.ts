@@ -12,7 +12,7 @@
  * 7. 延迟关闭：末位退订后进入宽限期再关闭，避免 StrictMode / HMR 造成的连接抖动。
  */
 
-import type { LogEntry, RegisterArea, RegisterData, SlaveConfig } from '@/lib/modbus-types';
+import type { LogEntry, RegisterArea, RegisterData, SlaveConfig, ValueSource } from '@/lib/modbus-types';
 
 // ── 消息协议（服务端 → 客户端） ──────────────────────────────────
 
@@ -24,7 +24,14 @@ export type SlaveServerMessage =
   | { type: 'log_entry'; payload: LogEntry }
   | {
       type: 'register_update';
-      payload: { slaveId: string; changes: Array<{ area: RegisterArea; address: number; value: number }> };
+      /**
+       * ⚠️ `address` 是**地址单位**（位区 = 位地址、值 0/1）——
+       * 换算/归行在 reducer 一处完成（Q19 的两套单位接缝）。
+       */
+      payload: {
+        slaveId: string;
+        changes: Array<{ area: RegisterArea; address: number; value: number; source: ValueSource }>;
+      };
     }
   | { type: 'read_response'; payload: { tabId: string; data: RegisterData[] } }
   | { type: 'write_response'; payload: { slaveId: string; success: boolean; error?: string } }
@@ -293,15 +300,18 @@ export interface SlaveWsManager {
   stopSlave: (slaveId: string) => void;
   /** 运行中改配置的唯一生效途径：服务端按"先停后起"串行执行 */
   restartSlave: (slaveId: string, config: SlaveConfig) => void;
+  /** ⭐ 寄存器单位（Q19 / Q20） */
   readRegisters: (
     tabId: string,
     slaveId: string,
     area: RegisterArea,
-    startAddress: number,
-    quantity: number,
+    startRegister: number,
+    registerCount: number,
   ) => void;
-  writeRegister: (slaveId: string, area: RegisterArea, address: number, value: number) => void;
-  writeRegisters: (slaveId: string, area: RegisterArea, startAddress: number, values: number[]) => void;
+  /** 手动注入单个寄存器（R1：不受区域门控） */
+  writeRegister: (slaveId: string, area: RegisterArea, registerIndex: number, value: number) => void;
+  /** 手动注入一段寄存器 */
+  writeRegisters: (slaveId: string, area: RegisterArea, startRegister: number, values: number[]) => void;
 }
 
 function subscribe(listener: MessageListener): () => void {
@@ -334,10 +344,10 @@ export const slaveWs: SlaveWsManager = {
   startSlave: (slaveId, config) => send('start_slave', { slaveId, config }),
   stopSlave: (slaveId) => send('stop_slave', { slaveId }),
   restartSlave: (slaveId, config) => send('restart_slave', { slaveId, config }),
-  readRegisters: (tabId, slaveId, area, startAddress, quantity) =>
-    send('read_registers', { tabId, slaveId, area, startAddress, quantity }),
-  writeRegister: (slaveId, area, address, value) =>
-    send('write_register', { slaveId, area, address, value }),
-  writeRegisters: (slaveId, area, startAddress, values) =>
-    send('write_registers', { slaveId, area, startAddress, values }),
+  readRegisters: (tabId, slaveId, area, startRegister, registerCount) =>
+    send('read_registers', { tabId, slaveId, area, startRegister, registerCount }),
+  writeRegister: (slaveId, area, registerIndex, value) =>
+    send('write_register', { slaveId, area, registerIndex, value }),
+  writeRegisters: (slaveId, area, startRegister, values) =>
+    send('write_registers', { slaveId, area, startRegister, values }),
 };

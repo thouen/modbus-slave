@@ -42,10 +42,11 @@ export const translations = {
     error: 'Error',
 
     // Memory configuration
-    coilCount: 'Coil Count (FC01/05/15)',
-    discreteInputCount: 'Discrete Input Count (FC02)',
-    holdingRegisterCount: 'Holding Register Count (FC03/06/16)',
-    inputRegisterCount: 'Input Register Count (FC04)',
+    // ⭐ Q17/Q19：字段名不变，但语义统一为「该区的**总寄存器数量**」（位区也按寄存器计）
+    coilCount: 'Total Registers — Coils (FC01/05/15)',
+    discreteInputCount: 'Total Registers — Discrete Inputs (FC02)',
+    holdingRegisterCount: 'Total Registers — Holding Registers (FC03/06/16)',
+    inputRegisterCount: 'Total Registers — Input Registers (FC04)',
     byteOrder: 'Byte Order',
     byteOrder32: '32-bit Byte Order',
     byteOrder64: '64-bit Byte Order',
@@ -58,6 +59,19 @@ export const translations = {
     inputRegisters: 'Input Registers',
     startAddress: 'Start Address',
     registerCount: 'Register Count',
+    // ⭐ Q20：地址一律按**寄存器**编号显示，位地址/位范围只作辅助只读显示
+    bits: 'bits',
+    startBit: 'Start bit',
+    masterReadOnlyHint: 'Read-only to master · manual injection allowed',
+    windowOutOfRange: 'Window exceeds this area’s register total — reduce start address or register count',
+    writeTooMany: 'A single submit is capped at 123 registers',
+    // ⭐ Q7：值来源
+    source: 'Source',
+    sourceAll: 'All',
+    sourceMaster: 'Master',
+    sourceManual: 'Manual',
+    sourceGenerator: 'Generator',
+    sourceNone: 'Initial',
     displayFormat: 'Display Format',
     defaultFormat: 'Default Format',
     defaultFormatHint: 'Default format for all addresses; can be overridden per row in the data table.',
@@ -181,10 +195,11 @@ export const translations = {
     error: '错误',
 
     // Memory configuration
-    coilCount: '线圈数量 (FC01/05/15)',
-    discreteInputCount: '离散输入数量 (FC02)',
-    holdingRegisterCount: '保持寄存器数量 (FC03/06/16)',
-    inputRegisterCount: '输入寄存器数量 (FC04)',
+    // ⭐ Q17/Q19：字段名不变，但语义统一为「该区的**总寄存器数量**」（位区也按寄存器计）
+    coilCount: '线圈区总寄存器数量 (FC01/05/15)',
+    discreteInputCount: '离散输入区总寄存器数量 (FC02)',
+    holdingRegisterCount: '保持寄存器区总寄存器数量 (FC03/06/16)',
+    inputRegisterCount: '输入寄存器区总寄存器数量 (FC04)',
     byteOrder: '字节序',
     byteOrder32: '32位字节序',
     byteOrder64: '64位字节序',
@@ -197,6 +212,19 @@ export const translations = {
     inputRegisters: '输入寄存器',
     startAddress: '起始地址',
     registerCount: '寄存器数量',
+    // ⭐ Q20：地址一律按**寄存器**编号显示，位地址/位范围只作辅助只读显示
+    bits: '位',
+    startBit: '起始位',
+    masterReadOnlyHint: '主站只读 · 仍可手动注入',
+    windowOutOfRange: '窗口超出该区总寄存器数量 —— 请调小起始地址或寄存器数量',
+    writeTooMany: '单帧最多提交 123 个寄存器',
+    // ⭐ Q7：值来源
+    source: '来源',
+    sourceAll: '全部',
+    sourceMaster: '主站',
+    sourceManual: '手动',
+    sourceGenerator: '生成器',
+    sourceNone: '未写入',
     displayFormat: '显示格式',
     defaultFormat: '默认格式',
     defaultFormatHint: '所有地址的默认格式；可在数据表格中逐行单独设置类型。',

@@ -104,13 +104,21 @@ describe('读操作 (FC01/02/03/04)', () => {
     assert.deepEqual(pdu, [0x01, 0x01, 0b00001001]);
   });
 
-  it('FC02 离散输入默认为 0 且只读', () => {
-    const { server } = makeServer();
-    const pdu = responsePdu(
-      server.handleRequest(tcpFrame(1, [MODBUS_FC.READ_DISCRETE_INPUTS, 0, 0, 0, 1]), 'tcp'),
-    );
-    assert.deepEqual(pdu, [0x02, 0x01, 0x00]);
-    assert.equal(server.writeRegister('discreteInputs', 0, 1), false);
+  it('FC02 离散输入默认为 0；主站无写功能码，但操作者可手动注入（R1）', () => {
+    const { server, changes } = makeServer();
+    const readDiscrete = () =>
+      responsePdu(server.handleRequest(tcpFrame(1, [MODBUS_FC.READ_DISCRETE_INPUTS, 0, 0, 0, 1]), 'tcp'));
+
+    assert.deepEqual(readDiscrete(), [0x02, 0x01, 0x00]);
+
+    // ⭐ R1：协议可写性 ≠ 模拟器可编辑性。
+    // 离散输入对主站只读（没有任何 FC 能写它），但操作者必须能注入值 ——
+    // 否则主站读输入类区域永远是 0，这类主站逻辑根本没法测。
+    assert.equal(server.writeRegister('discreteInputs', 0, 1), true);
+    assert.deepEqual(changes, [
+      { area: 'discreteInputs', address: 0, value: 1, source: 'manual' },
+    ]);
+    assert.deepEqual(readDiscrete(), [0x02, 0x01, 0x01]);
   });
 });
 
@@ -124,7 +132,7 @@ describe('写操作 (FC05/06/15/16)', () => {
     );
     assert.deepEqual(pdu, [0x05, 0x00, 0x01, 0xff, 0x00]);
     assert.equal(server.readRegister('coils', 1), 1);
-    assert.deepEqual(changes, [{ area: 'coils', address: 1, value: 1 }]);
+    assert.deepEqual(changes, [{ area: 'coils', address: 1, value: 1, source: 'master' }]);
   });
 
   it('FC05 非法值回异常码 0x03', () => {
@@ -152,9 +160,9 @@ describe('写操作 (FC05/06/15/16)', () => {
     );
     assert.deepEqual(pdu, [0x10, 0x00, 0x02, 0x00, 0x03]);
     assert.deepEqual(changes, [
-      { area: 'holdingRegisters', address: 2, value: 1 },
-      { area: 'holdingRegisters', address: 3, value: 2 },
-      { area: 'holdingRegisters', address: 4, value: 3 },
+      { area: 'holdingRegisters', address: 2, value: 1, source: 'master' },
+      { area: 'holdingRegisters', address: 3, value: 2, source: 'master' },
+      { area: 'holdingRegisters', address: 4, value: 3, source: 'master' },
     ]);
   });
 
@@ -223,7 +231,9 @@ describe('单元号与广播', () => {
     const response = server.handleRequest(tcpFrame(0, [MODBUS_FC.WRITE_SINGLE_REGISTER, 0, 7, 0x00, 0x63]), 'tcp');
     assert.equal(response, null);
     assert.equal(server.readRegister('holdingRegisters', 7), 0x63);
-    assert.deepEqual(changes, [{ area: 'holdingRegisters', address: 7, value: 0x63 }]);
+    assert.deepEqual(changes, [
+      { area: 'holdingRegisters', address: 7, value: 0x63, source: 'master' },
+    ]);
   });
 
   it('广播读操作不应答且不改动内存', () => {
@@ -285,11 +295,23 @@ describe('组帧防御', () => {
 // ── 内存直访（UI 路径） ───────────────────────────────────────────
 
 describe('内存直访（UI 路径）', () => {
-  it('越界写入被拒绝', () => {
-    const { server } = makeServer();
+  it('越界写入被拒绝（位区上限 = areaTotalRegisters × 16，Q18）', () => {
+    const { server } = makeServer(); // coilCount = 16 ⇒ 256 个位地址
     assert.equal(server.writeRegister('holdingRegisters', 16, 1), false);
-    assert.equal(server.writeRegister('coils', 16, 1), false);
     assert.equal(server.writeRegister('holdingRegisters', -1, 1), false);
+    assert.equal(server.writeRegister('coils', 256, 1), false); // 越界第一个位地址
+    assert.equal(server.writeRegister('coils', 255, 1), true); // 最后一个合法位地址
+  });
+
+  it('四个区都能被手动注入（R1）；越界仍然整体拒绝', () => {
+    const { server } = makeServer();
+    assert.equal(server.writeRange('inputRegisters', 0, [1, 2]), true);
+    assert.deepEqual(server.readRange('inputRegisters', 0, 2), [1, 2]);
+    assert.equal(server.writeRegister('discreteInputs', 3, 1), true);
+    assert.equal(server.readRegister('discreteInputs', 3), 1);
+    // 越界：整体拒绝，不做部分写入
+    assert.equal(server.writeRange('inputRegisters', 15, [1, 2]), false);
+    assert.equal(server.readRegister('inputRegisters', 15), 0);
   });
 
   it('区间写入越界时整体拒绝，不做部分写入', () => {
@@ -299,15 +321,88 @@ describe('内存直访（UI 路径）', () => {
     assert.equal(server.readRegister('holdingRegisters', 3), 0);
   });
 
-  it('只读区域写入被拒绝', () => {
-    const { server } = makeServer();
-    assert.equal(server.writeRange('inputRegisters', 0, [1]), false);
-    assert.equal(server.writeRegister('inputRegisters', 0, 1), false);
-  });
-
   it('readRange 返回窗口内全部值', () => {
     const { server } = makeServer();
     server.writeRange('holdingRegisters', 1, [10, 20, 30]);
     assert.deepEqual(server.readRange('holdingRegisters', 1, 3), [10, 20, 30]);
+  });
+});
+
+// ── 位打包存储（Q18）与寄存器单位视图层（Q19 / Q20） ──────────────
+
+describe('位区按位打包存储 + 寄存器单位视图', () => {
+  it('写位只置位该字内的对应位，其余位不受影响', () => {
+    const { server } = makeServer();
+    server.writeRegister('coils', 5, 1);
+    assert.equal(server.readRegister('coils', 5), 1);
+    assert.equal(server.readRegister('coils', 4), 0);
+    assert.equal(server.readRegister('coils', 6), 0);
+    // ⚠️ 位序：字内 bit 0（LSB）= 编号最小的线圈地址
+    assert.equal(server.memory.coils[0], 0b100000);
+    // ⭐ 数组长度 = coilCount（**不是** ×16 —— ×16 只是容量结果）
+    assert.equal(server.memory.coils.length, 16);
+    assert.equal(server.memory.coils instanceof Uint16Array, true);
+  });
+
+  it('位区容量 = areaTotalRegisters × 16 个位地址', () => {
+    const { server } = makeServer({ coilCount: 2 });
+    assert.equal(server.writeRegister('coils', 31, 1), true); // 第 2 个寄存器的最后一位
+    assert.equal(server.writeRegister('coils', 32, 1), false); // 越界
+  });
+
+  it('readSnapshot 行 = 寄存器：address 为寄存器序号、位区 rawValue 为打包字、带来源', () => {
+    const { server } = makeServer();
+    server.writeRegister('coils', 1, 1); // 落在寄存器 0
+    assert.deepEqual(server.readSnapshot('coils', 0, 2), [
+      { address: 0, rawValue: 0b10, source: 'manual' },
+      { address: 1, rawValue: 0, source: null },
+    ]);
+  });
+
+  it('injectRegister 位区写满该寄存器的 16 个位地址，只对变化的位发增量', () => {
+    const { server, changes } = makeServer();
+    assert.equal(server.injectRegister('coils', 1, 0b1010), true);
+    // 寄存器 1 覆盖位地址 16~31；置位的是字内 bit 1、bit 3 ⇒ 位地址 17、19
+    assert.deepEqual(changes, [
+      { area: 'coils', address: 17, value: 1, source: 'manual' },
+      { area: 'coils', address: 19, value: 1, source: 'manual' },
+    ]);
+    assert.equal(server.readSnapshot('coils', 1, 1)[0].rawValue, 0b1010);
+  });
+
+  it('injectRange 越界整体拒绝，不做部分写入', () => {
+    const { server } = makeServer({ holdingRegisterCount: 4 });
+    assert.equal(server.injectRange('holdingRegisters', 2, [1, 2, 3]), false);
+    assert.equal(server.readSnapshot('holdingRegisters', 2, 1)[0].rawValue, 0);
+  });
+
+  it('手动注入四个区都成功（R1），来源记为 manual', () => {
+    const { server } = makeServer();
+    for (const area of ['coils', 'discreteInputs', 'holdingRegisters', 'inputRegisters'] as const) {
+      assert.equal(server.injectRegister(area, 0, 0x1234), true, area);
+      assert.equal(server.readSnapshot(area, 0, 1)[0].source, 'manual', area);
+    }
+  });
+
+  it('主站 FC 写入把来源记为 master，不影响其它寄存器的来源', () => {
+    const { server } = makeServer();
+    server.injectRegister('holdingRegisters', 1, 0xaaaa);
+    server.handleRequest(tcpFrame(1, [MODBUS_FC.WRITE_SINGLE_REGISTER, 0, 0, 0x00, 0x2a]), 'tcp');
+    const rows = server.readSnapshot('holdingRegisters', 0, 2);
+    assert.deepEqual(rows, [
+      { address: 0, rawValue: 0x2a, source: 'master' },
+      { address: 1, rawValue: 0xaaaa, source: 'manual' },
+    ]);
+  });
+
+  it('四个区共用同一套读上限：125 寄存器（位区 = 2000 位）', () => {
+    const { server } = makeServer({ coilCount: 200 });
+    // 2000 位 = 125 寄存器 ✓ 放行；byteCount = 2000 / 8 = 250
+    const ok = responsePdu(server.handleRequest(tcpFrame(1, [0x01, 0, 0, 0x07, 0xd0]), 'tcp'));
+    assert.deepEqual(ok.slice(0, 2), [0x01, 250]);
+    // 2001 位 = 超上限 ⇒ 0x03
+    assert.deepEqual(responsePdu(server.handleRequest(tcpFrame(1, [0x01, 0, 0, 0x07, 0xd1]), 'tcp')), [
+      0x81, 0x03,
+    ]);
   });
 });

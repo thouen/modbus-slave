@@ -184,6 +184,15 @@ export function SlavePanel() {
     return state.slaveStatus[state.activeSlaveId];
   }, [state.activeSlaveId, state.slaveStatus]);
 
+  /**
+   * 只读提示：该输入对应的**位范围**（Q19 / Q20）。
+   *
+   * 把 "1 寄存器 = 16 位" 的换算**显式展示出来** —— 这样"单位统一"就不是静默换算。
+   * 四个区用同一套措辞（含字区），这是 Q20 里那个"辅助只读"位地址。
+   */
+  const bitRange = (areaTotalRegisters: number) =>
+    `${t('bits')} 0 ~ ${Math.max(0, areaTotalRegisters * 16 - 1)}`;
+
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
@@ -524,48 +533,60 @@ export function SlavePanel() {
                     <Input
                       size="sm"
                       type="number"
-                      min={0}
+                      min={1}
                       max={9999}
                       value={editingSlave.coilCount}
-                      onChange={(e) => setEditingSlave({ ...editingSlave, coilCount: Math.max(0, parseInt(e.target.value) || 0) })}
+                      onChange={(e) => setEditingSlave({ ...editingSlave, coilCount: Math.max(1, parseInt(e.target.value) || 1) })}
                       className="mt-1"
                     />
+                    <span className="mt-0.5 block text-[9px] text-muted-foreground/60">
+                      {bitRange(editingSlave.coilCount)}
+                    </span>
                   </div>
                   <div>
                     <Label className="text-xs">{t('discreteInputCount')}</Label>
                     <Input
                       size="sm"
                       type="number"
-                      min={0}
+                      min={1}
                       max={9999}
                       value={editingSlave.discreteInputCount}
-                      onChange={(e) => setEditingSlave({ ...editingSlave, discreteInputCount: Math.max(0, parseInt(e.target.value) || 0) })}
+                      onChange={(e) => setEditingSlave({ ...editingSlave, discreteInputCount: Math.max(1, parseInt(e.target.value) || 1) })}
                       className="mt-1"
                     />
+                    <span className="mt-0.5 block text-[9px] text-muted-foreground/60">
+                      {bitRange(editingSlave.discreteInputCount)}
+                    </span>
                   </div>
                   <div>
                     <Label className="text-xs">{t('holdingRegisterCount')}</Label>
                     <Input
                       size="sm"
                       type="number"
-                      min={0}
+                      min={1}
                       max={9999}
                       value={editingSlave.holdingRegisterCount}
-                      onChange={(e) => setEditingSlave({ ...editingSlave, holdingRegisterCount: Math.max(0, parseInt(e.target.value) || 0) })}
+                      onChange={(e) => setEditingSlave({ ...editingSlave, holdingRegisterCount: Math.max(1, parseInt(e.target.value) || 1) })}
                       className="mt-1"
                     />
+                    <span className="mt-0.5 block text-[9px] text-muted-foreground/60">
+                      {bitRange(editingSlave.holdingRegisterCount)}
+                    </span>
                   </div>
                   <div>
                     <Label className="text-xs">{t('inputRegisterCount')}</Label>
                     <Input
                       size="sm"
                       type="number"
-                      min={0}
+                      min={1}
                       max={9999}
                       value={editingSlave.inputRegisterCount}
-                      onChange={(e) => setEditingSlave({ ...editingSlave, inputRegisterCount: Math.max(0, parseInt(e.target.value) || 0) })}
+                      onChange={(e) => setEditingSlave({ ...editingSlave, inputRegisterCount: Math.max(1, parseInt(e.target.value) || 1) })}
                       className="mt-1"
                     />
+                    <span className="mt-0.5 block text-[9px] text-muted-foreground/60">
+                      {bitRange(editingSlave.inputRegisterCount)}
+                    </span>
                   </div>
                 </div>
               </div>

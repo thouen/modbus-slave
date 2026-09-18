@@ -2,13 +2,19 @@
 
 import { createContext, useContext, useEffect, useReducer, type ReactNode } from 'react';
 import {
+  MAX_READ_REGISTERS_PER_FRAME,
+  bitAddressToBitIndex,
+  bitAddressToRegister,
   isBitArea,
+  registerSpanToAddressSpan,
+  withBitSet,
   type SlaveConfig,
   type RegisterArea,
   type RegisterData,
   type LogEntry,
   type RegisterViewTab,
   type SlaveStatus,
+  type ValueSource,
 } from '@/lib/modbus-types';
 import { generateId } from '@/lib/modbus-utils';
 
@@ -48,7 +54,11 @@ export type Action =
   | { type: 'SET_REGISTER_DATA'; payload: { tabId: string; data: RegisterData[] } }
   | {
       type: 'PATCH_REGISTER_DATA';
-      payload: { slaveId: string; changes: Array<{ area: RegisterArea; address: number; value: number }> };
+      payload: {
+        slaveId: string;
+        /** ⚠️ `address` 是**地址单位**（位区 = 位地址，值 0/1），见 reducer 内的接缝说明 */
+        changes: Array<{ area: RegisterArea; address: number; value: number; source: ValueSource }>;
+      };
     }
   | {
       type: 'APPLY_SERVER_SNAPSHOT';
@@ -74,19 +84,26 @@ const initialState: AppState = {
 /**
  * 兼容旧版持久化视图标签：补齐新增字段（formatOverrides / 字节序 / 数量）。
  *
- * 返回值是显式构造的完整对象，因此旧数据里已经废弃的字段（如 `writeMode`）
- * 会被自然丢弃，无需额外清理。
+ * 返回值是显式构造的完整对象，因此旧数据里已经废弃的字段（如 `writeMode`）会被自然丢弃。
+ *
+ * ⚠️ **单位变更（Q19）**：数量字段由 `quantity` 改名 `registerCount`，单位也从
+ * "地址个数"改为"**寄存器个数**"。旧值直接沿用 —— 字区两者等价；位区旧值按位数计，
+ * 沿用后覆盖范围按寄存器解释（可能不足或多出），因此统一**夹到单帧上限 125**以内，
+ * 避免旧标签带着一个 UI 上限都超出窗口的值打开。
  */
-export function migrateViewTab(tab: Partial<RegisterViewTab>): RegisterViewTab {
+export function migrateViewTab(
+  tab: Partial<RegisterViewTab> & { quantity?: number },
+): RegisterViewTab {
   const area: RegisterArea = tab.area ?? 'holdingRegisters';
   const overrides = tab.formatOverrides;
+  const rawCount = tab.registerCount ?? tab.quantity ?? 20;
   return {
     id: tab.id ?? generateId(),
     name: tab.name ?? '',
     slaveId: tab.slaveId ?? '',
     area,
     startAddress: tab.startAddress ?? 0,
-    quantity: tab.quantity ?? 20,
+    registerCount: Math.min(MAX_READ_REGISTERS_PER_FRAME, Math.max(1, rawCount)),
     displayFormat: tab.displayFormat ?? (isBitArea(area) ? 'led' : 'hex'),
     formatOverrides:
       overrides && Object.keys(overrides).length > 0 ? overrides : undefined,
@@ -296,6 +313,12 @@ export function appReducer(state: AppState, action: Action): AppState {
     case 'PATCH_REGISTER_DATA': {
       // 服务端精确增量 → 只更新"已缓存且在窗口内"的视图标签页。
       // 未读取过的标签页不做局部补丁：局部数据会让界面呈现"半真半假"的状态。
+      //
+      // ⚠️ **两套单位的接缝就在这一处**（Q19 / Q20）：
+      // · 增量 `change.address` 是**地址单位**（位区 = 位地址，值 0/1）；
+      // · 标签窗口 `startAddress` / `registerCount` 是**寄存器单位**。
+      // ⇒ 先用 registerSpanToAddressSpan 把窗口换算成地址段再比对；
+      //    命中后，位区增量用 bitAddressToRegister 归到所在行、用 withBitSet 落位。
       const { slaveId, changes } = action.payload;
       if (changes.length === 0) return state;
 
@@ -307,21 +330,34 @@ export function appReducer(state: AppState, action: Action): AppState {
         const data = registerData[tab.id];
         if (!data || data.length === 0) continue;
 
+        const span = registerSpanToAddressSpan(tab.area, tab.startAddress, tab.registerCount);
+        const spanEnd = span.start + span.count;
         const relevant = changes.filter(
-          (c) => c.area === tab.area && c.address >= tab.startAddress && c.address < tab.startAddress + tab.quantity,
+          (c) => c.area === tab.area && c.address >= span.start && c.address < spanEnd,
         );
         if (relevant.length === 0) continue;
 
         let tabData = data;
         let tabMutated = false;
         for (const change of relevant) {
-          const idx = tabData.findIndex((d) => d.address === change.address);
-          if (idx < 0 || tabData[idx].rawValue === change.value) continue;
+          // 行按**寄存器序号**索引（位区 1 行 = 16 个位地址）
+          const registerIndex = isBitArea(tab.area)
+            ? bitAddressToRegister(change.address)
+            : change.address;
+          const idx = tabData.findIndex((d) => d.address === registerIndex);
+          if (idx < 0) continue;
+
+          const row = tabData[idx];
+          const nextValue = isBitArea(tab.area)
+            ? withBitSet(row.rawValue, bitAddressToBitIndex(change.address), change.value !== 0)
+            : change.value;
+          if (row.rawValue === nextValue && row.source === change.source) continue;
+
           if (!tabMutated) {
             tabData = [...data];
             tabMutated = true;
           }
-          tabData[idx] = { address: change.address, rawValue: change.value };
+          tabData[idx] = { ...row, rawValue: nextValue, source: change.source };
         }
         if (tabMutated) {
           registerData[tab.id] = tabData;
@@ -419,10 +455,10 @@ export function createDefaultSlave(): SlaveConfig {
       port: 502,
     },
     slaveId: 1,
-    coilCount: 100,
-    discreteInputCount: 100,
-    holdingRegisterCount: 100,
-    inputRegisterCount: 100,
+    coilCount: 1000,
+    discreteInputCount: 1000,
+    holdingRegisterCount: 1000,
+    inputRegisterCount: 1000,
     byteOrder32: 'ABCD',
     byteOrder64: 'ABCDEFGH',
   };

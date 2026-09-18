@@ -186,9 +186,18 @@ interface UseModbusWsReturn {
   startSlave: (slaveId: string, config: SlaveConfig) => void;
   stopSlave: (slaveId: string) => void;
   restartSlave: (slaveId: string, config: SlaveConfig) => void;
-  readRegisters: (tabId: string, slaveId: string, area: RegisterArea, startAddress: number, quantity: number) => void;
-  writeRegister: (slaveId: string, area: RegisterArea, address: number, value: number) => void;
-  writeRegisters: (slaveId: string, area: RegisterArea, startAddress: number, values: number[]) => void;
+  /** ⭐ 寄存器单位（Q19 / Q20） */
+  readRegisters: (
+    tabId: string,
+    slaveId: string,
+    area: RegisterArea,
+    startRegister: number,
+    registerCount: number,
+  ) => void;
+  /** 手动注入单个寄存器（R1：不受区域门控） */
+  writeRegister: (slaveId: string, area: RegisterArea, registerIndex: number, value: number) => void;
+  /** 手动注入一段寄存器 */
+  writeRegisters: (slaveId: string, area: RegisterArea, startRegister: number, values: number[]) => void;
 }
 
 export function useModbusWs(): UseModbusWsReturn {
@@ -226,22 +235,22 @@ export function useModbusWs(): UseModbusWsReturn {
   );
 
   const readRegisters = useCallback(
-    (tabId: string, slaveId: string, area: RegisterArea, startAddress: number, quantity: number) => {
-      slaveWs.readRegisters(tabId, slaveId, area, startAddress, quantity);
+    (tabId: string, slaveId: string, area: RegisterArea, startRegister: number, registerCount: number) => {
+      slaveWs.readRegisters(tabId, slaveId, area, startRegister, registerCount);
     },
     [],
   );
 
   const writeRegister = useCallback(
-    (slaveId: string, area: RegisterArea, address: number, value: number) => {
-      slaveWs.writeRegister(slaveId, area, address, value);
+    (slaveId: string, area: RegisterArea, registerIndex: number, value: number) => {
+      slaveWs.writeRegister(slaveId, area, registerIndex, value);
     },
     [],
   );
 
   const writeRegisters = useCallback(
-    (slaveId: string, area: RegisterArea, startAddress: number, values: number[]) => {
-      slaveWs.writeRegisters(slaveId, area, startAddress, values);
+    (slaveId: string, area: RegisterArea, startRegister: number, values: number[]) => {
+      slaveWs.writeRegisters(slaveId, area, startRegister, values);
     },
     [],
   );

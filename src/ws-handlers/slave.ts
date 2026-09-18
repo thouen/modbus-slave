@@ -1,11 +1,11 @@
 import { WebSocket, type WebSocketServer } from 'ws';
 import { createServer as createNetServer, type Server as NetServer, type Socket } from 'net';
-import type { SlaveConfig, LogEntry, RegisterData, RegisterArea } from '@/lib/modbus-types';
+import type { SlaveConfig, LogEntry, RegisterArea } from '@/lib/modbus-types';
 import { createSlaveServer, type SlaveServer, type RegisterChange } from '@/lib/modbus-slave-server';
 import { generateId, bytesToHex } from '@/lib/modbus-utils';
 
 // SerialPort is optional - loaded dynamically for serial protocol support
-import { MODBUS_MAX } from '@/lib/modbus-types';
+import { MODBUS_MAX, isBitArea, bitAddressToRegister } from '@/lib/modbus-types';
 
 /** 单个 TCP 端点允许的最大并发客户端连接数（超出直接拒绝，避免资源耗尽） */
 const MAX_TCP_CONNECTIONS = 64;
@@ -109,8 +109,8 @@ function broadcastRegisterChanges(slaveId: string, changes: RegisterChange[]) {
 interface ChangeCollector {
   /** 与协议层 onRegisterChange 同签名，可直接透传 */
   onChange: (change: RegisterChange) => void;
-  /** 广播并清空缓冲；缓冲为空时不做任何事 */
-  flush: () => void;
+  /** 广播并清空缓冲，**返回本次实际广播的变更**（供日志按来源区分措辞）；缓冲为空时不做任何事 */
+  flush: () => RegisterChange[];
 }
 
 function createChangeCollector(slaveId: string): ChangeCollector {
@@ -120,12 +120,30 @@ function createChangeCollector(slaveId: string): ChangeCollector {
       pending.push(change);
     },
     flush: () => {
-      if (pending.length === 0) return;
+      if (pending.length === 0) return [];
       const changes = pending;
       pending = [];
       broadcastRegisterChanges(slaveId, changes);
+      return changes;
     },
   };
+}
+
+/**
+ * 变更摘要（日志用）。
+ *
+ * ⚠️ 位区按「**位地址 → 0/1**」呈现（打包细节不外泄，见 ROADMAP §3.6），
+ * 同时带上它所属的**寄存器序号** —— 与界面"地址一律按寄存器编号"的口径对齐（Q20）。
+ */
+function summarizeChanges(changes: RegisterChange[]): string {
+  const shown = changes.slice(0, 4).map((c) => {
+    if (isBitArea(c.area)) {
+      return `${c.area}[bit ${c.address} = reg ${bitAddressToRegister(c.address)}] = ${c.value}`;
+    }
+    return `${c.area}[${c.address}] = ${c.value}`;
+  });
+  const rest = changes.length - shown.length;
+  return shown.join(', ') + (rest > 0 ? ` …(+${rest})` : '');
 }
 
 function createLogEntry(slaveId: string, direction: 'rx' | 'tx' | 'sys', type: 'info' | 'data' | 'error', message: string, rawData?: string, functionCode?: number): LogEntry {
@@ -245,8 +263,14 @@ async function ensureTcpEndpoint(host: string, port: number): Promise<TcpEndpoin
           );
         }
 
-        // 无论是否回响应（广播写入不回响应）都必须推送实际变更
-        entry.changes.flush();
+        // 无论是否回响应（广播写入不回响应）都必须推送实际变更。
+        // 顺带回执"实际改了什么" —— 措辞与界面手动注入区分开（Q7）。
+        const applied = entry.changes.flush();
+        if (applied.length > 0) {
+          broadcastLog(
+            createLogEntry(id, 'sys', 'data', `Master write: ${summarizeChanges(applied)}`),
+          );
+        }
       }
     };
 
@@ -450,7 +474,12 @@ async function startSerialSlave(
       }
 
       // 串口路径同样在整帧处理完成后推送实际变更
-      changes.flush();
+      const serialApplied = changes.flush();
+      if (serialApplied.length > 0) {
+        broadcastLog(
+          createLogEntry(slaveId, 'sys', 'data', `Master write: ${summarizeChanges(serialApplied)}`),
+        );
+      }
     }
   });
 
@@ -647,12 +676,14 @@ export function setupSlaveHandler(wss: WebSocketServer) {
           }
 
           case 'read_registers': {
-            const { tabId, slaveId, area, startAddress, quantity } = msg.payload as {
+            // ⭐ WS 一律用**寄存器单位**（Q19 / Q20）：`startRegister` + `registerCount`。
+            // 位区的 ×16 换算收口在协议层 readSnapshot 内部，前端不感知。
+            const { tabId, slaveId, area, startRegister, registerCount } = msg.payload as {
               tabId: string;
               slaveId: string;
               area: RegisterArea;
-              startAddress: number;
-              quantity: number;
+              startRegister: number;
+              registerCount: number;
             };
 
             const entry = runningSlaves.get(slaveId);
@@ -661,21 +692,18 @@ export function setupSlaveHandler(wss: WebSocketServer) {
               break;
             }
 
-            const values = entry.server.readRange(area, startAddress, quantity);
-            const data: RegisterData[] = values.map((v, i) => ({
-              address: startAddress + i,
-              rawValue: v,
-            }));
+            const data = entry.server.readSnapshot(area, startRegister, registerCount);
 
             safeSend(ws, { type: 'read_response', payload: { tabId, data } });
             break;
           }
 
           case 'write_register': {
-            const { slaveId, area, address, value } = msg.payload as {
+            // ⭐ 寄存器单位；**不受区域门控**（R1）：四个区都能被操作者注入
+            const { slaveId, area, registerIndex, value } = msg.payload as {
               slaveId: string;
               area: RegisterArea;
-              address: number;
+              registerIndex: number;
               value: number;
             };
 
@@ -688,17 +716,14 @@ export function setupSlaveHandler(wss: WebSocketServer) {
               break;
             }
 
-            const success = entry.server.writeRegister(area, address, value);
+            const success = entry.server.injectRegister(area, registerIndex, value);
             if (success) {
-              // 变更由协议层回调收集，此处统一 flush；值未变化时不会产生消息
-              entry.changes.flush();
-              const logEntry = createLogEntry(
-                slaveId,
-                'sys',
-                'data',
-                `UI write: ${area}[${address}] = ${value}`,
-              );
-              broadcastLog(logEntry);
+              const applied = entry.changes.flush();
+              if (applied.length > 0) {
+                broadcastLog(
+                  createLogEntry(slaveId, 'sys', 'data', `Manual inject: ${summarizeChanges(applied)}`),
+                );
+              }
             }
             safeSend(ws, {
               type: 'write_response',
@@ -707,17 +732,18 @@ export function setupSlaveHandler(wss: WebSocketServer) {
                 : {
                     slaveId,
                     success,
-                    error: `Write rejected: ${area}[${address}] out of range or read-only`,
+                    error: `Write rejected: ${area}[${registerIndex}] out of range`,
                   },
             });
             break;
           }
 
           case 'write_registers': {
-            const { slaveId, area, startAddress, values } = msg.payload as {
+            // ⭐ 寄存器单位区间（R1：四个区都可注入）
+            const { slaveId, area, startRegister, values } = msg.payload as {
               slaveId: string;
               area: RegisterArea;
-              startAddress: number;
+              startRegister: number;
               values: number[];
             };
 
@@ -730,17 +756,15 @@ export function setupSlaveHandler(wss: WebSocketServer) {
               break;
             }
 
-            const success = entry.server.writeRange(area, startAddress, values);
+            const success = entry.server.injectRange(area, startRegister, values);
             if (success) {
               // 区间写入的每个变更点都由协议层逐个收集，一次 flush 全部推送
-              entry.changes.flush();
-              const logEntry = createLogEntry(
-                slaveId,
-                'sys',
-                'data',
-                `UI write: ${area}[${startAddress}..${startAddress + values.length - 1}]`,
-              );
-              broadcastLog(logEntry);
+              const applied = entry.changes.flush();
+              if (applied.length > 0) {
+                broadcastLog(
+                  createLogEntry(slaveId, 'sys', 'data', `Manual inject: ${summarizeChanges(applied)}`),
+                );
+              }
             }
             safeSend(ws, {
               type: 'write_response',
@@ -749,7 +773,7 @@ export function setupSlaveHandler(wss: WebSocketServer) {
                 : {
                     slaveId,
                     success,
-                    error: `Write rejected: ${area}[${startAddress}..${startAddress + values.length - 1}] out of range or read-only`,
+                    error: `Write rejected: ${area}[${startRegister}..${startRegister + values.length - 1}] out of range`,
                   },
             });
             break;

@@ -1,24 +1,54 @@
-import type { SlaveConfig, SlaveMemory, RegisterArea } from '@/lib/modbus-types';
+import type {
+  SlaveConfig,
+  SlaveMemory,
+  RegisterArea,
+  RegisterData,
+  ValueSource,
+} from '@/lib/modbus-types';
 import {
   MODBUS_FC,
   MODBUS_EXCEPTION,
   MODBUS_MAX,
+  BITS_PER_REGISTER,
+  SOURCE_CODE,
+  decodeSource,
   fcToArea,
-  isBitFC,
+  isBitArea,
   createSlaveMemory,
+  areaWords,
+  areaSources,
+  readPackedBit,
+  writePackedBit,
+  bitAddressToRegister,
 } from '@/lib/modbus-types';
 
 /**
  * ModBus Slave Server - pure protocol handling
  * Handles RTU, ASCII, and TCP frame parsing and response generation.
  * Memory model is managed externally via SlaveMemory.
+ *
+ * ── 两套单位，别混（Q19 / Q20）──────────────────────────────────
+ * · **地址单位**（ModBus 原生）：位区 = 位地址。用于协议解析、`checkAddress`、`readRegister`。
+ * · **寄存器单位**：视图 / 状态 / WS 一律用它。`readSnapshot` / `injectRegister` 收口于此，
+ *   内部经 `BITS_PER_REGISTER` 换算，**打包细节不出这一层**。
  */
 
-/** 单次内存变更（area + address + 新值），用于向 UI 推送精确增量 */
+/** 单次内存变更（用于向 UI 推送精确增量） */
 export interface RegisterChange {
   area: RegisterArea;
+  /**
+   * ⚠️ **ModBus 地址单位**：
+   * - 字区 = 寄存器序号；
+   * - 位区 = **位地址**（值 `0 / 1`）。
+   *
+   * 界面表格按寄存器分行（Q20），由 reducer 用 `bitAddressToRegister()` 归行 ——
+   * 打包/换算细节不越过本层（见 ROADMAP §3.6「位读写必须收口到 helper」）。
+   */
   address: number;
+  /** 字区 = 寄存器值；位区 = `0 / 1` */
   value: number;
+  /** 值来源（Q7）：主站功能码 / 界面手动注入 / 生成器 */
+  source: ValueSource;
 }
 
 export interface SlaveServerOptions {
@@ -34,6 +64,16 @@ export interface SlaveServer {
   config: SlaveConfig;
   /** Handle a raw ModBus request frame (ADU), return response ADU bytes */
   handleRequest: (request: Uint8Array, mode: 'rtu' | 'ascii' | 'tcp') => Uint8Array | null;
+
+  // ── 视图层（⭐ 寄存器单位，Q19 / Q20）───────────────────────────
+  /** 读取窗口快照：行 `address` = 寄存器序号；位区 `rawValue` = 按位打包的 16 位字 */
+  readSnapshot: (area: RegisterArea, startRegister: number, registerCount: number) => RegisterData[];
+  /** 手动注入单个寄存器（R1：四个区都可注入，不受区域门控） */
+  injectRegister: (area: RegisterArea, registerIndex: number, value: number) => boolean;
+  /** 手动注入一段寄存器 */
+  injectRange: (area: RegisterArea, startRegister: number, values: number[]) => boolean;
+
+  // ── 内存层（ModBus 地址单位：位区 = 位地址）────────────────────
   /** Read register value from memory (for UI) */
   readRegister: (area: RegisterArea, address: number) => number;
   /** Write register value to memory (for UI) */
@@ -170,47 +210,80 @@ export function createSlaveServer(config: SlaveConfig, options: SlaveServerOptio
 
   // ── Memory access helpers ──
 
+  /** 该区的寄存器总数量（= 数组长度，因为"数组长度 = 该区 areaTotalRegisters"） */
+  function areaTotalRegisters(area: RegisterArea): number {
+    return areaWords(memory, area).length;
+  }
+
+  /**
+   * 越界判断（⚠️ **地址单位**：位区传入的是位地址）。
+   *
+   * 上界**直接取自数组长度** —— 这样"数组越界"与"声明范围越界"永远等价，
+   * 不会出现"配置改了但数组还是旧长度"这类不一致。
+   * 位区容量 = `areaTotalRegisters × 16`（Q18：位打包在字里）。
+   */
   function checkAddress(area: RegisterArea, address: number, quantity: number): boolean {
-    let max = 0;
-    switch (area) {
-      case 'coils': max = config.coilCount; break;
-      case 'discreteInputs': max = config.discreteInputCount; break;
-      case 'holdingRegisters': max = config.holdingRegisterCount; break;
-      case 'inputRegisters': max = config.inputRegisterCount; break;
-    }
+    const words = areaTotalRegisters(area);
+    const max = isBitArea(area) ? words * BITS_PER_REGISTER : words;
     return address >= 0 && quantity > 0 && address + quantity <= max;
   }
 
-  function readBit(area: RegisterArea, address: number): boolean {
-    const arr = area === 'coils' ? memory.coils : memory.discreteInputs;
-    return (arr[address] ?? 0) !== 0;
+  /** 记录一次写入的来源（⚠️ 按**寄存器**索引；位区 = 位地址 / 16） */
+  function markSource(area: RegisterArea, registerIndex: number, source: ValueSource): void {
+    const sources = areaSources(memory, area);
+    const code = SOURCE_CODE[source];
+    if (sources[registerIndex] !== code) sources[registerIndex] = code;
   }
 
-  function writeBit(area: RegisterArea, address: number, value: boolean): boolean {
-    if (area !== 'coils') return false; // discrete inputs are read-only
-    const next = value ? 1 : 0;
-    if (memory.coils[address] === next) return true; // 值未变化：不产生增量事件
-    memory.coils[address] = next;
-    notifyChange?.({ area, address, value: next });
+  /** 读某寄存器的值来源（Q7）；未写入过 → `null` */
+  function readSource(area: RegisterArea, registerIndex: number): ValueSource | null {
+    return decodeSource(areaSources(memory, area)[registerIndex] ?? 0);
+  }
+
+  /** 读一个位地址（位打包：字内 bit 0 = 编号最小的位地址） */
+  function readBit(area: RegisterArea, address: number): boolean {
+    return readPackedBit(areaWords(memory, area), address);
+  }
+
+  /**
+   * 写一个位地址。返回 `true` 表示调用成功（值未变化时也算成功，但不产生增量事件）。
+   *
+   * ⚠️ 这里**不再按区域门控**：可写性已上移到调用路径 ——
+   * 协议路径由功能码决定区域（FC05/15 只会落到 `coils`），
+   * 界面注入路径则允许四个区（R1）。
+   */
+  function writeBit(area: RegisterArea, address: number, value: boolean, source: ValueSource): boolean {
+    const words = areaWords(memory, area);
+    if (!writePackedBit(words, address, value)) return true; // 值未变化：不产生增量事件
+    markSource(area, bitAddressToRegister(address), source);
+    notifyChange?.({ area, address, value: value ? 1 : 0, source });
     return true;
   }
 
+  /** 读一个寄存器（字区 = 寄存器序号；位区 = 位地址，返回 0/1） */
   function readReg(area: RegisterArea, address: number): number {
-    const arr = area === 'holdingRegisters' ? memory.holdingRegisters : memory.inputRegisters;
-    return arr[address] ?? 0;
+    return areaWords(memory, area)[address] ?? 0;
   }
 
-  function writeReg(area: RegisterArea, address: number, value: number): boolean {
-    if (area !== 'holdingRegisters') return false; // input registers are read-only
+  /** 写一个寄存器（字区）。返回 `true` 表示调用成功（值未变化时不产生增量事件）。 */
+  function writeReg(area: RegisterArea, address: number, value: number, source: ValueSource): boolean {
+    const words = areaWords(memory, area);
     const next = value & 0xffff;
-    if (memory.holdingRegisters[address] === next) return true; // 值未变化：不产生增量事件
-    memory.holdingRegisters[address] = next;
-    notifyChange?.({ area, address, value: next });
+    if (words[address] === next) return true; // 值未变化：不产生增量事件
+    words[address] = next;
+    markSource(area, address, source);
+    notifyChange?.({ area, address, value: next, source });
     return true;
   }
 
   // ── PDU processing ──
 
+  /**
+   * ⚠️ 这里的 `quantity` 是**线协议单位**：位区 = 位数，字区 = 寄存器数。
+   *
+   * 上限因此仍用 `MODBUS_MAX` 的原始数字；但换成「寄存器」单位后四区自动同一套
+   * （读 `2000 / 125 = 125 寄存器`、写 `1968 / 123 = 123 寄存器`，见 ROADMAP §3.7）。
+   */
   function processPDU(fc: number, data: Uint8Array): Uint8Array | null {
     switch (fc) {
       case MODBUS_FC.READ_COILS:
@@ -282,7 +355,7 @@ export function createSlaveServer(config: SlaveConfig, options: SlaveServerOptio
           return buildException(fc, MODBUS_EXCEPTION.ILLEGAL_DATA_ADDRESS);
         }
 
-        writeBit(area, addr, value === 0xff00);
+        writeBit(area, addr, value === 0xff00, 'master');
 
         // Echo request
         const response = new Uint8Array(5);
@@ -305,7 +378,7 @@ export function createSlaveServer(config: SlaveConfig, options: SlaveServerOptio
           return buildException(fc, MODBUS_EXCEPTION.ILLEGAL_DATA_ADDRESS);
         }
 
-        writeReg(area, addr, value);
+        writeReg(area, addr, value, 'master');
 
         // Echo request
         const response = new Uint8Array(5);
@@ -343,7 +416,7 @@ export function createSlaveServer(config: SlaveConfig, options: SlaveServerOptio
           const byteIdx = Math.floor(i / 8);
           const bitIdx = i % 8;
           const bitVal = ((data[5 + byteIdx] ?? 0) >> bitIdx) & 0x01;
-          writeBit(area, startAddr + i, bitVal !== 0);
+          writeBit(area, startAddr + i, bitVal !== 0, 'master');
         }
 
         // Response: fc + startAddr + quantity
@@ -380,7 +453,7 @@ export function createSlaveServer(config: SlaveConfig, options: SlaveServerOptio
 
         for (let i = 0; i < quantity; i++) {
           const val = ((data[5 + i * 2] ?? 0) << 8) | (data[6 + i * 2] ?? 0);
-          writeReg(area, startAddr + i, val);
+          writeReg(area, startAddr + i, val, 'master');
         }
 
         // Response: fc + startAddr + quantity
@@ -470,27 +543,87 @@ export function createSlaveServer(config: SlaveConfig, options: SlaveServerOptio
     }
   }
 
-  // ── Public: direct memory access (for UI / WebSocket) ──
+  // ── Public: 视图层（⭐ 寄存器单位，Q19 / Q20）──────────────────
+
+  /**
+   * 读取窗口快照。行 `address` = **寄存器序号**；位区 `rawValue` = 按位打包的 16 位字
+   * （1 字 = 16 个位地址），四个区的视图因此完全同构。
+   */
+  function readSnapshot(area: RegisterArea, startRegister: number, registerCount: number): RegisterData[] {
+    const words = areaWords(memory, area);
+    const rows: RegisterData[] = [];
+    for (let i = 0; i < registerCount; i++) {
+      const registerIndex = startRegister + i;
+      rows.push({
+        address: registerIndex,
+        rawValue: words[registerIndex] ?? 0,
+        source: readSource(area, registerIndex),
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * 手动注入一个寄存器（R1：**不受 `isWritableArea` 门控** —— 那是协议语义）。
+   *
+   * 位区把 `value` 当 16 位字写入该寄存器覆盖的 16 个位地址
+   * （低位 bit 0 ↔ 编号最小的位地址）。
+   */
+  function injectRegister(area: RegisterArea, registerIndex: number, value: number): boolean {
+    return injectRange(area, registerIndex, [value]);
+  }
+
+  /**
+   * 手动注入一段寄存器。先整体校验，避免"写一半才发现越界"的部分写入。
+   *
+   * 位区**只对真正变化的位**发增量（一个寄存器 = 16 条位地址级事件）。
+   */
+  function injectRange(area: RegisterArea, startRegister: number, values: number[]): boolean {
+    if (values.length === 0) return false;
+    if (startRegister < 0 || startRegister + values.length > areaTotalRegisters(area)) return false;
+
+    const words = areaWords(memory, area);
+    for (let i = 0; i < values.length; i++) {
+      const registerIndex = startRegister + i;
+      const previous = words[registerIndex] ?? 0;
+      const next = values[i] & 0xffff;
+      if (previous === next) continue; // 值未变化：不产生增量事件
+
+      words[registerIndex] = next;
+      markSource(area, registerIndex, 'manual');
+
+      if (isBitArea(area)) {
+        const diff = previous ^ next;
+        const base = registerIndex * BITS_PER_REGISTER;
+        for (let b = 0; b < BITS_PER_REGISTER; b++) {
+          if (diff & (1 << b)) {
+            notifyChange?.({ area, address: base + b, value: (next >> b) & 1, source: 'manual' });
+          }
+        }
+      } else {
+        notifyChange?.({ area, address: registerIndex, value: next, source: 'manual' });
+      }
+    }
+    return true;
+  }
+
+  // ── Public: 内存层（ModBus 地址单位）───────────────────────────
 
   function readRegister(area: RegisterArea, address: number): number {
-    if (area === 'coils' || area === 'discreteInputs') {
-      return readBit(area, address) ? 1 : 0;
-    }
+    if (isBitArea(area)) return readBit(area, address) ? 1 : 0;
     return readReg(area, address);
   }
 
+  /**
+   * 按**地址**写单个值（手动注入路径，R1：四个区都不受门控）。
+   *
+   * ⚠️ 地址校验不可省：否则越界写会被类型化数组静默丢弃，
+   * 而变更检测会把"读回 undefined"误判成一次真实变更。
+   */
   function writeRegister(area: RegisterArea, address: number, value: number): boolean {
-    // UI 写入同样必须过地址校验：否则越界写会被类型化数组静默丢弃，
-    // 而变更检测会把"读回 undefined"误判成一次真实变更。
     if (!checkAddress(area, address, 1)) return false;
-    if (area === 'coils') {
-      return writeBit(area, address, value !== 0);
-    }
-    if (area === 'holdingRegisters') {
-      return writeReg(area, address, value);
-    }
-    // discreteInputs and inputRegisters are read-only
-    return false;
+    if (isBitArea(area)) return writeBit(area, address, value !== 0, 'manual');
+    return writeReg(area, address, value, 'manual');
   }
 
   function readRange(area: RegisterArea, startAddress: number, quantity: number): number[] {
@@ -517,6 +650,9 @@ export function createSlaveServer(config: SlaveConfig, options: SlaveServerOptio
     memory,
     config,
     handleRequest,
+    readSnapshot,
+    injectRegister,
+    injectRange,
     readRegister,
     writeRegister,
     readRange,

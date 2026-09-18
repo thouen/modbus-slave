@@ -551,7 +551,7 @@ export function RegisterViewer() {
               onChange={(e) => updateTab(activeTab.id, { startAddress: Number(e.target.value) || 0 })}
               className="h-6 w-20 border-border/40 bg-background px-2 text-xs"
             />
-            <span className="text-[9px] text-muted-foreground/60">
+            <span className="text-[10px] text-muted-foreground/80">
               {t('startBit')} {activeTab.startAddress * 16}
             </span>
           </label>
@@ -573,7 +573,7 @@ export function RegisterViewer() {
               }
               className="h-6 w-16 border-border/40 bg-background px-2 text-xs"
             />
-            <span className="text-[9px] text-muted-foreground/60">{windowBitRange}</span>
+            <span className="font-mono text-[10px] text-muted-foreground/80">{windowBitRange}</span>
           </label>
 
           {/* 窗口越界 / 超单帧写上限 —— 都是"提示 + 禁用提交"，不是静默截断 */}
@@ -932,7 +932,7 @@ function DataTable({
                     )}
                     {item.address}
                     {bitArea && (
-                      <span className="mt-0.5 block text-[9px] font-normal leading-none text-muted-foreground/50">
+                      <span className="mt-0.5 block w-fit rounded bg-foreground/10 px-1 py-px text-[10px] font-normal leading-none text-muted-foreground">
                         {t('bits')} {item.address * 16}~{item.address * 16 + 15}
                       </span>
                     )}

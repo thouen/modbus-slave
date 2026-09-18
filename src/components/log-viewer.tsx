@@ -183,7 +183,10 @@ export function LogViewer() {
                 <span className="text-muted-foreground shrink-0 w-[78px]">
                   {formatTime(log.timestamp)}
                 </span>
-                <span className="shrink-0 w-4 flex items-center justify-center">
+                <span
+                  className="shrink-0 w-4 flex items-center justify-center"
+                  title={log.direction === 'tx' ? t('sent') : log.direction === 'rx' ? t('received') : t('system')}
+                >
                   {directionIcon(log.direction)}
                 </span>
                 <span className={`flex-1 truncate ${typeColor(log.type)}`}>

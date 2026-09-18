@@ -739,7 +739,7 @@ function DataTable({
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('address')}</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('rawHex')}</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('rawDec')}</th>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('type')}</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('dataType')}</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">
                 {t('formattedValue')}
               </th>

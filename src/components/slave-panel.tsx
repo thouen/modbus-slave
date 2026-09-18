@@ -649,8 +649,8 @@ export function SlavePanel() {
             <AlertDialogCancel onClick={() => { setImportOpen(false); setPendingImport(null); }}>
               {t('cancel')}
             </AlertDialogCancel>
-            <AlertDialogAction onClick={() => handleImport('merge')}>{t('merge')}</AlertDialogAction>
-            <AlertDialogAction onClick={() => handleImport('overwrite')}>{t('overwrite')}</AlertDialogAction>
+            <AlertDialogAction onClick={() => handleImport('merge')}>{t('importMerge')}</AlertDialogAction>
+            <AlertDialogAction onClick={() => handleImport('overwrite')}>{t('importOverwrite')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

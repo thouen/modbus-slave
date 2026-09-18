@@ -386,6 +386,60 @@ describe('视图标签迁移与绑定', () => {
     assert.deepEqual(next.viewTabs[1].formatOverrides, undefined);
     assert.equal(next.viewTabs[1].startAddress, 100);
   });
+
+  // ⚠️ 回归用例：窗口身份 = 区域 + 起始地址 + 数量。
+  // 切区后缓存若不清，界面会短暂显示上一个区域的值，而"未编辑行回填"会把旧区的值写进新区。
+  it('UPDATE_VIEW_TAB 改区域会丢弃该标签的缓存（防跨区串值）', () => {
+    const tab = makeTab('t1', 's1', {
+      area: 'discreteInputs',
+      startAddress: 0,
+      registerCount: 4,
+    });
+    const state = baseState({
+      viewTabs: [tab],
+      registerData: {
+        t1: [
+          { address: 0, rawValue: 11 },
+          { address: 1, rawValue: 22 },
+        ],
+      },
+    });
+    const next = appReducer(state, {
+      type: 'UPDATE_VIEW_TAB',
+      payload: { ...tab, area: 'holdingRegisters' },
+    });
+    assert.equal(next.registerData.t1, undefined);
+  });
+
+  it('UPDATE_VIEW_TAB 改起始地址或数量同样丢弃缓存', () => {
+    const tab = makeTab('t1', 's1', { startAddress: 0, registerCount: 4 });
+    const cached = { t1: [{ address: 0, rawValue: 11 }] };
+
+    const moved = appReducer(baseState({ viewTabs: [tab], registerData: cached }), {
+      type: 'UPDATE_VIEW_TAB',
+      payload: { ...tab, startAddress: 10 },
+    });
+    assert.equal(moved.registerData.t1, undefined);
+
+    const resized = appReducer(baseState({ viewTabs: [tab], registerData: cached }), {
+      type: 'UPDATE_VIEW_TAB',
+      payload: { ...tab, registerCount: 8 },
+    });
+    assert.equal(resized.registerData.t1, undefined);
+  });
+
+  it('UPDATE_VIEW_TAB 只改窗口之外的字段时保留缓存（不误伤）', () => {
+    const tab = makeTab('t1', 's1', { startAddress: 0, registerCount: 4 });
+    const state = baseState({
+      viewTabs: [tab],
+      registerData: { t1: [{ address: 0, rawValue: 11 }] },
+    });
+    const next = appReducer(state, {
+      type: 'UPDATE_VIEW_TAB',
+      payload: { ...tab, formatOverrides: { 0: 'float' } },
+    });
+    assert.deepEqual(next.registerData.t1, [{ address: 0, rawValue: 11 }]);
+  });
 });
 
 // ── 日志环形缓冲 ─────────────────────────────────────────────────

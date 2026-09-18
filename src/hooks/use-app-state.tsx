@@ -280,9 +280,24 @@ export function appReducer(state: AppState, action: Action): AppState {
       };
     }
     case 'UPDATE_VIEW_TAB': {
+      const next = action.payload;
+      const prev = state.viewTabs.find(t => t.id === next.id);
+      // ⚠️ **窗口身份 = 区域 + 起始地址 + 数量**。三者任一变化，已缓存的那段数据
+      // 就不再对应当前窗口，必须立即丢弃 —— 否则在新数据到达前，
+      // ① 界面会把上一个区域的值当成当前区域显示；
+      // ② 更危险：`submitWrite` 的"未编辑行回填"会拿旧区的值凑整段提交，
+      //    把旧区的数据真写进新区（R1 后实测到的串区 bug）。
+      const windowChanged =
+        !prev ||
+        prev.area !== next.area ||
+        prev.startAddress !== next.startAddress ||
+        prev.registerCount !== next.registerCount;
+      const registerData = { ...state.registerData };
+      if (windowChanged) delete registerData[next.id];
       return {
         ...state,
-        viewTabs: state.viewTabs.map(t => t.id === action.payload.id ? action.payload : t),
+        viewTabs: state.viewTabs.map(t => (t.id === next.id ? next : t)),
+        registerData,
       };
     }
     case 'DELETE_VIEW_TAB': {

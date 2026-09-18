@@ -3,6 +3,7 @@ import type {
   ByteOrder64,
   DataDisplayFormat,
   RegisterData,
+  RegisterViewTab,
 } from './modbus-types';
 
 /**
@@ -499,4 +500,22 @@ export function verifyLrc(bytes: number[]): boolean {
   const data = bytes.slice(0, -1);
   const expected = bytes[bytes.length - 1];
   return lrc(data) === expected;
+}
+
+// ── 视图窗口身份 ──
+
+/**
+ * 视图窗口的**身份键**：标签 id + 区域 + 起始地址 + 数量（**均为寄存器单位**）。
+ *
+ * 用途：给"只对某个窗口成立"的临时状态做归属判定。目前有两处用它：
+ * - **写入草稿**（`writeDraft`）：草稿本体是 `Map<寄存器序号, 值>`，**不带区域**，
+ *   所以必须靠这个键分桶 —— 换区域 / 改窗口落进不同的桶（不会串值、不会写错区），
+ *   切走再切回来还是同一个桶（草稿不丢）。
+ * - **读取缓存校验**：缓存必须恰好覆盖当前窗口才允许"整段提交"。
+ *
+ * ⚠️ 不要退化成"只用标签 id"：**同一个标签可以换区域看不同数组**，
+ * 那样会让草稿重新跨区泄漏（见 ROADMAP §3.2「R1 后续修复：跨区串值」）。
+ */
+export function registerWindowKey(tab: RegisterViewTab): string {
+  return `${tab.id}|${tab.area}|${tab.startAddress}|${tab.registerCount}`;
 }

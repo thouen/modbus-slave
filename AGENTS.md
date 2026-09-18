@@ -76,6 +76,12 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 - ⭐ **值来源（Q7）**：内存逐寄存器记 `source`（`master` / `manual` / `generator`），
   表格有来源角标 + 可按来源筛选；日志措辞区分（`Master write:` vs `Manual inject:`）。
 - 行内编辑只写"草稿"，点击「写入」才整段提交；未编辑行回填当前原值，避免部分覆盖。
+  ⚠️ **草稿按「窗口身份」= `标签 id + 区域 + 起始地址 + 数量` 分桶**（`registerWindowKey()`，唯一生成处）：
+  换窗口 ⇒ 落进不同的桶（不串值、不会写错区）；切回原窗口 ⇒ 同一个桶，**草稿不丢**。
+  **缓存的规则相反** —— 窗口一变就丢弃，并在新数据到达前禁用提交（防"未编辑行回填"写错窗口）。
+  草稿自身**不带区域**：曾因此把离散输入区的草稿显示、甚至提交进别的区
+  （见 ROADMAP §3.2「R1 后续修复：跨区串值」）。⚠️ master 侧同类缺陷尚未修（属 R3）。
+  ⚠️ `registerWindowKey()` 在渲染期调用**必须包 `useMemo`**，否则 React Compiler 会跳过整个组件的编译。
 - 写入后不主动轮询：视图由服务端 `register_update` 精确增量刷新。
 - 新增字段必须提供迁移缺省（见 `migrateViewTab()`），否则老用户的 localStorage 标签会缺字段。
   ⚠️ 改名/改单位的字段要做**单位换算或收敛**，别直接搬旧值（如 `quantity` → `registerCount` 需夹到单帧上限）。

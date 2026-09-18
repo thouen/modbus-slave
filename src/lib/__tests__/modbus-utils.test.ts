@@ -20,6 +20,7 @@ import {
   hexToBytes,
   parseDisplayValue,
   registersToBytes,
+  registerWindowKey,
   reorderBytes,
   reorderBytesInv,
   resolveRegisterLayout,
@@ -264,5 +265,44 @@ describe('校验与工具函数', () => {
     const b = generateId();
     assert.notEqual(a, b);
     assert.match(a, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+});
+
+describe('registerWindowKey（窗口身份）', () => {
+  const tab = {
+    id: 't1',
+    name: 't1',
+    slaveId: 's1',
+    area: 'coils',
+    startAddress: 0,
+    registerCount: 20,
+    displayFormat: 'led',
+    byteOrder32: 'ABCD',
+    byteOrder64: 'ABCDEFGH',
+  } as const;
+
+  it('同一个窗口恒定得到同一个键（切走再切回来能找到自己的草稿）', () => {
+    assert.equal(registerWindowKey({ ...tab }), registerWindowKey({ ...tab }));
+  });
+
+  // ⚠️ 下面每一条都是"窗口身份"的组成部分，缺一条就会把草稿泄漏到别的窗口/区域。
+  it('换区域即换键（防跨区串值 —— R1 实测 bug 的那条）', () => {
+    assert.notEqual(registerWindowKey({ ...tab }), registerWindowKey({ ...tab, area: 'discreteInputs' }));
+  });
+
+  it('改起始地址即换键', () => {
+    assert.notEqual(registerWindowKey({ ...tab }), registerWindowKey({ ...tab, startAddress: 10 }));
+  });
+
+  it('改数量即换键', () => {
+    assert.notEqual(registerWindowKey({ ...tab }), registerWindowKey({ ...tab, registerCount: 8 }));
+  });
+
+  it('换标签即换键（防跨标签串值）', () => {
+    assert.notEqual(registerWindowKey({ ...tab }), registerWindowKey({ ...tab, id: 't2' }));
+  });
+
+  it('不因显示格式变化换键（换格式不该丢草稿）', () => {
+    assert.equal(registerWindowKey({ ...tab }), registerWindowKey({ ...tab, displayFormat: 'hex' }));
   });
 });

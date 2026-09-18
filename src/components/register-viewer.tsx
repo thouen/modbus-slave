@@ -25,6 +25,7 @@ import {
   formatRegisterValue,
   generateId,
   parseDisplayValue,
+  registerWindowKey,
   resolveRegisterLayout,
 } from '@/lib/modbus-utils';
 import type { TranslationKey } from '@/lib/i18n';
@@ -147,9 +148,26 @@ export function RegisterViewer() {
   const [editingCell, setEditingCell] = useState<string | null>(null);
   const [cellValue, setCellValue] = useState('');
   const [editingFormatRow, setEditingFormatRow] = useState<string | null>(null);
-  // 写入草稿：地址 -> 待写入值
-  const [writeDraft, setWriteDraft] = useState<Map<number, number>>(new Map());
+  // 写入草稿：**窗口身份 -> (寄存器序号 -> 待写入值)**。
+  // ⚠️ 按窗口分桶，而不是一张全局表：草稿不带区域，混在一起会把上一个区的待写入值
+  // 显示、甚至提交到别的区（见 ROADMAP §3.2「R1 后续修复：跨区串值」）。
+  const [writeDrafts, setWriteDrafts] = useState<Record<string, Map<number, number>>>({});
   const [refreshing, setRefreshing] = useState(false);
+
+  /** 当前窗口的草稿桶（渲染用；提交时按各自标签的窗口键取，不依赖"当前选中"） */
+  //
+  // ⚠️ `registerWindowKey()` **必须包在 useMemo 里，不要在渲染期直接调用**。
+  // 实测：渲染期调用一个编译器无法证明纯度的模块级函数，会让 React Compiler **跳过整个组件**
+  // 的编译，报 `react-hooks/preserve-manual-memoization` —— 而且报错会落在 `startRename` /
+  // `commitCellEdit` / `handleRead` 等**与本次改动完全无关**的回调上（提示"推断依赖是 setEditingTabId"），
+  // 极难定位。包进 useMemo 即恢复通过，同时保证"窗口身份"的格式只在 `registerWindowKey` 一处定义，
+  // 不会出现两处格式串漂移。
+  const writeDraft: Map<number, number> = useMemo(
+    () =>
+      (activeTab ? writeDrafts[registerWindowKey(activeTab)] : undefined) ??
+      new Map<number, number>(),
+    [activeTab, writeDrafts],
+  );
 
   /** 读取标签窗口（⭐ 寄存器单位，Q19 / Q20） */
   const doRead = useCallback(
@@ -244,22 +262,40 @@ export function RegisterViewer() {
           setEditingCell(null);
           return;
         }
-        setWriteDraft((prev) => {
-          const next = new Map(prev);
+        setWriteDrafts((prev) => {
+          const key = registerWindowKey(tab);
+          const next = new Map<number, number>(prev[key] ?? []);
           for (let i = 0; i < span; i++) next.set(registerIndex + i, regs[i]);
-          return next;
+          return { ...prev, [key]: next };
         });
       } else {
         const num = parseDisplayValue(raw, format);
-        setWriteDraft((prev) => {
-          const next = new Map(prev);
+        setWriteDrafts((prev) => {
+          const key = registerWindowKey(tab);
+          const next = new Map<number, number>(prev[key] ?? []);
           next.set(registerIndex, num);
-          return next;
+          return { ...prev, [key]: next };
         });
       }
       setEditingCell(null);
     },
     [],
+  );
+
+  /**
+   * 缓存是否**恰好覆盖当前窗口**（行数一致 + 逐行地址对得上）。
+   *
+   * ⚠️ 用来挡住"串区写入"：切换区域后新数据还没回来时，`registerData[tab.id]`
+   * 里可能还躺着上一个区域的整段值，而"未编辑行回填"会拿它去凑整段提交
+   * ⇒ 旧区的值被写进新区。宁可拒绝提交，也不能写错地方。
+   */
+  const windowMatches = useCallback(
+    (tab: RegisterViewTab): boolean => {
+      const data = registerData[tab.id];
+      if (!data || data.length !== tab.registerCount) return false;
+      return data.every((d, i) => d.address === tab.startAddress + i);
+    },
+    [registerData],
   );
 
   /**
@@ -276,29 +312,37 @@ export function RegisterViewer() {
   const submitWrite = useCallback(
     (tab: RegisterViewTab) => {
       if (!isRunning) return;
+      // 窗口一致性守卫（见 windowMatches）：数据没到位就不提交，别拿旧窗口的值凑整段
+      if (!windowMatches(tab)) return;
       const data = registerData[tab.id] ?? [];
       const count = Math.max(1, tab.registerCount);
+      const key = registerWindowKey(tab);
+      const draft = writeDrafts[key] ?? new Map<number, number>();
       const values: number[] = [];
-      const nextDraft = new Map(writeDraft);
       for (let i = 0; i < count; i++) {
         const registerIndex = tab.startAddress + i;
-        const edited = writeDraft.get(registerIndex);
+        const edited = draft.get(registerIndex);
         if (edited !== undefined) {
           values.push(edited);
         } else {
           const row = data.find((d) => d.address === registerIndex);
           values.push(row ? row.rawValue : 0);
         }
-        nextDraft.delete(registerIndex);
       }
       if (values.length === 1) {
         writeRegister(tab.slaveId, tab.area, tab.startAddress, values[0]);
       } else {
         writeRegisters(tab.slaveId, tab.area, tab.startAddress, values);
       }
-      setWriteDraft(nextDraft);
+      // 本次提交覆盖了该窗口的**全部**行，整桶清掉即可；其它窗口的草稿不受影响
+      setWriteDrafts((prev) => {
+        if (prev[key] === undefined) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     },
-    [isRunning, registerData, writeDraft, writeRegister, writeRegisters],
+    [isRunning, registerData, writeDrafts, windowMatches, writeRegister, writeRegisters],
   );
 
   /** 手动读取（带短暂 loading 态） */
@@ -330,13 +374,18 @@ export function RegisterViewer() {
     readRegisters,
   ]);
 
-  // 切换标签时清理草稿与编辑态，避免跨标签串值
+  // 切换标签 / 换区域 / 改窗口范围时，只清理**编辑态** —— 那几行已经不属于当前窗口了
+  // （`editingCell` 的 key 是 `${地址}:${行号}`，换窗口后可能误命中别的行）。
+  //
+  // ⚠️ 草稿**不在这里清**。早先的写法是"换窗口即清空草稿"，虽然挡住了串区，
+  // 但把"切走再切回来"的草稿也一起清掉了。现在改为草稿按**窗口身份**分桶保存
+  // （见 `registerWindowKey`）：「线圈改 → 切离散 → 切回线圈」草稿原样还在，
+  // 同时离散区也看不到线圈区的草稿 —— **"不串"和"不丢"是同一套机制的两面**。
   useEffect(() => {
-    setWriteDraft(new Map());
     setEditingCell(null);
     setEditingFormatRow(null);
     setEditingTabId(null);
-  }, [activeTabItemId]);
+  }, [activeTabItemId, activeTabArea, activeTabStart, activeTabRegisterCount]);
 
   // 可写性只由"从站是否运行"决定：四个区对操作者一律可注入（R1）
   const canWrite = activeTab ? isRunning : false;
@@ -652,7 +701,7 @@ export function RegisterViewer() {
             <Button
               variant="outline"
               size="sm"
-              disabled={!canWrite || windowOutOfRange || writeTooMany}
+              disabled={!canWrite || windowOutOfRange || writeTooMany || !windowMatches(activeTab)}
               onClick={() => submitWrite(activeTab)}
               className={`h-7 border-success/40 px-2.5 text-xs ${
                 writeDraft.size > 0

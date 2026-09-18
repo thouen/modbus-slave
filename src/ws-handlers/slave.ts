@@ -681,7 +681,10 @@ export function setupSlaveHandler(wss: WebSocketServer) {
 
             const entry = runningSlaves.get(slaveId);
             if (!entry) {
-              safeSend(ws, { type: 'write_response', payload: { success: false, error: 'Slave not running' } });
+              safeSend(ws, {
+                type: 'write_response',
+                payload: { slaveId, success: false, error: 'Slave not running' },
+              });
               break;
             }
 
@@ -697,7 +700,16 @@ export function setupSlaveHandler(wss: WebSocketServer) {
               );
               broadcastLog(logEntry);
             }
-            safeSend(ws, { type: 'write_response', payload: { success } });
+            safeSend(ws, {
+              type: 'write_response',
+              payload: success
+                ? { slaveId, success }
+                : {
+                    slaveId,
+                    success,
+                    error: `Write rejected: ${area}[${address}] out of range or read-only`,
+                  },
+            });
             break;
           }
 
@@ -711,7 +723,10 @@ export function setupSlaveHandler(wss: WebSocketServer) {
 
             const entry = runningSlaves.get(slaveId);
             if (!entry) {
-              safeSend(ws, { type: 'write_response', payload: { success: false, error: 'Slave not running' } });
+              safeSend(ws, {
+                type: 'write_response',
+                payload: { slaveId, success: false, error: 'Slave not running' },
+              });
               break;
             }
 
@@ -727,7 +742,16 @@ export function setupSlaveHandler(wss: WebSocketServer) {
               );
               broadcastLog(logEntry);
             }
-            safeSend(ws, { type: 'write_response', payload: { success } });
+            safeSend(ws, {
+              type: 'write_response',
+              payload: success
+                ? { slaveId, success }
+                : {
+                    slaveId,
+                    success,
+                    error: `Write rejected: ${area}[${startAddress}..${startAddress + values.length - 1}] out of range or read-only`,
+                  },
+            });
             break;
           }
 

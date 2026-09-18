@@ -27,33 +27,52 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 ### Core Logic (src/lib/)
 - `modbus-types.ts` — All shared TypeScript types (SlaveConfig, RegisterArea, etc.)
 - `modbus-utils.ts` — Formatting, CRC/LRC calculation, byte order utilities
+  - ⚠️ `formatRegisterValue(registers: RegisterData[], startIndex, format, order32, order64)` 的签名与输出语义**必须与 modbus-master 同步**（hex 不带 `0x`、`led` 为 16 位串、float 6 位 / double 10 位小数）
+  - 逐行类型映射：`getBitsPerValue` / `getSpanForFormat` / `formatFitsAt` / `resolveRegisterLayout`（32 位占 2 个寄存器、64 位占 4 个；位区域恒为 1）
+  - 输入解析与编码：`parseDisplayValue` / `encodeValueToRegisters`（行内编辑写入宽类型时使用）
 - `modbus-slave-server.ts` — **核心**：ModBus 从站协议处理 + TCP 服务器
 - `i18n.ts` — Translations (EN/ZH)
 - `utils.ts` — `cn` class merging utility
 
 ### Hooks (src/hooks/)
-- `use-app-state.tsx` — Global app state (React Context + useReducer)
+- `use-app-state.tsx` — Global app state (React Context + useReducer)；`migrateViewTab()` 负责旧持久化标签的字段迁移（writeMode / formatOverrides / 字节序 / 数量）
 - `use-i18n.tsx` — i18n provider + hook
 - `use-modbus-ws.ts` — WebSocket connection + action dispatchers
 
 ### Components (src/components/)
 - `slave-panel.tsx` — Left panel: slave list + config + start/stop controls
-- `register-viewer.tsx` — Multi-tab register data viewer/editor
+- `register-viewer.tsx` — 寄存器视图：标签栏（**绑定从站实例**，跨从站显示全部标签 + 从站名徽标，双击重命名）+ 内联配置条（区域 / 起始地址 / 数量 / 默认格式 / 字节序 / 写模式）+ 数据表（逐行类型 + 行内编辑草稿写入）
 - `log-viewer.tsx` — Real-time request log viewer
 - `ui/` — shadcn/ui base components
 
 ### Server (src/)
 - `server.ts` — Custom Next.js server with WebSocket upgrade (**生产也必须用它启动**，否则 `/ws/slave` 不存在)
-- `ws-handlers/slave.ts` — WebSocket message routing；TCP 端点复用（`tcpEndpoints`）+ Unit ID 路由 + 启停串行化
+- `ws-handlers/slave.ts` — WebSocket message routing；TCP 端点复用（`tcpEndpoints`）+ Unit ID 路由 + 启停串行化；`write_response` 必须回传 `slaveId`（失败信息要能被前端落到按从站筛选的错误日志）
 
 ### Tests (src/\\*\\*/__tests__/)
 - `modbus-slave-server.test.ts` — PDU 编解码、CRC/LRC、地址与长度校验、广播、组帧防御
-- `modbus-utils.test.ts` — 字节序换算与显示格式化
-- `use-app-state.test.ts` — reducer 纯函数（快照校准、增量补丁、删除清理、日志环形缓冲）
+- `modbus-utils.test.ts` — 字节序换算、显示格式化、逐行类型映射（`resolveRegisterLayout` / `formatFitsAt`）、输入解析与编码往返
+- `use-app-state.test.ts` — reducer 纯函数（快照校准、增量补丁、删除清理、日志环形缓冲、视图标签迁移与从站绑定联动）
 
 ### Pages (src/app/)
 - `layout.tsx` — Root layout (fonts, metadata, theme)
 - `page.tsx` — Main application page
+
+## Register Viewer Contract / 寄存器视图契约
+
+视图标签（`RegisterViewTab`）绑定**从站实例**（`slaveId` = 应用内部 id），并携带写入能力：
+
+| 字段 | 语义 |
+|---|---|
+| `area` | 数据区域：`coils` / `discreteInputs` / `holdingRegisters` / `inputRegisters` |
+| `displayFormat` | 标签级默认显示格式（可被逐行覆盖） |
+| `formatOverrides` | 逐行类型映射：`Record<address, DataDisplayFormat>`，仅记录分组起始地址 |
+| `writeMode` | `off` 只读 ｜ `single` 仅起始地址一行（线圈 FC05 / 保持寄存器 FC06，走 `write_register`）｜ `multiple` 整段窗口（FC15 / FC16，走 `write_registers`） |
+
+- 离散输入 / 输入寄存器为**只读区域**，`writeMode` 强制 `off`；接口层 `writeRegister` 也会拒绝。
+- 行内编辑只写"草稿"，点击「写入」才整段提交；未编辑行回填当前原值，避免部分覆盖。
+- 写入后不主动轮询：视图由服务端 `register_update` 精确增量刷新。
+- 新增字段必须提供迁移缺省（见 `migrateViewTab()`），否则老用户的 localStorage 标签会缺字段。
 
 ## Development Workflow / 开发工作流
 

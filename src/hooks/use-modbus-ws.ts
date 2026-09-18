@@ -117,9 +117,14 @@ function handleServerMessage(msg: SlaveServerMessage) {
       break;
     }
     case 'write_response': {
-      // 无 slaveId 归属，无法写入按从站筛选的日志；失败详情由日志通道反映
-      if (!msg.payload.success && msg.payload.error) {
-        console.error('WS write failed:', msg.payload.error);
+      // 失败必须落到按从站可筛选的日志（只读区域写入、越界写入都走这里）
+      if (!msg.payload.success) {
+        const message = msg.payload.error ?? 'Write failed';
+        dispatch({
+          type: 'ADD_LOG',
+          payload: makeLog(msg.payload.slaveId, 'sys', 'error', message),
+        });
+        console.error('WS write failed:', message);
       }
       break;
     }

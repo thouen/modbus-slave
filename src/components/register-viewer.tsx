@@ -1,13 +1,34 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Plus, RefreshCw, Upload, Radio, X } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppState } from '@/hooks/use-app-state';
 import { useModbusWs } from '@/hooks/use-modbus-ws';
-import type { RegisterArea, DataDisplayFormat, ByteOrder32, ByteOrder64, RegisterData, RegisterViewTab } from '@/lib/modbus-types';
-import { formatRegisterValue, getFormatRegisterCount, generateId } from '@/lib/modbus-utils';
+import {
+  isBitArea,
+  isWritableArea,
+  isWordArea,
+  type ByteOrder32,
+  type ByteOrder64,
+  type DataDisplayFormat,
+  type RegisterArea,
+  type RegisterData,
+  type RegisterViewTab,
+  type WriteMode,
+} from '@/lib/modbus-types';
+import {
+  encodeValueToRegisters,
+  formatFitsAt,
+  formatRegisterValue,
+  generateId,
+  parseDisplayValue,
+  resolveRegisterLayout,
+} from '@/lib/modbus-utils';
+import type { TranslationKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -15,469 +36,940 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Plus, X, Pencil, Play, Square, RefreshCw } from 'lucide-react';
 
-const AREA_OPTIONS: { value: RegisterArea; label: string; tKey: string }[] = [
-  { value: 'coils', label: 'Coils (FC01/05/15)', tKey: 'coils' },
-  { value: 'discreteInputs', label: 'Discrete Inputs (FC02)', tKey: 'discreteInputs' },
-  { value: 'holdingRegisters', label: 'Holding Registers (FC03/06/16)', tKey: 'holdingRegisters' },
-  { value: 'inputRegisters', label: 'Input Registers (FC04)', tKey: 'inputRegisters' },
+/** 区域选项：标签走 i18n，FC 提示为协议固定文案 */
+const AREA_OPTIONS: { value: RegisterArea; labelKey: TranslationKey; fcHint: string }[] = [
+  { value: 'coils', labelKey: 'coils', fcHint: 'FC01/05/15' },
+  { value: 'discreteInputs', labelKey: 'discreteInputs', fcHint: 'FC02' },
+  { value: 'holdingRegisters', labelKey: 'holdingRegisters', fcHint: 'FC03/06/16' },
+  { value: 'inputRegisters', labelKey: 'inputRegisters', fcHint: 'FC04' },
 ];
 
-const FORMAT_OPTIONS: { value: DataDisplayFormat; label: string }[] = [
-  { value: 'hex', label: 'HEX (16-bit)' },
-  { value: 'ushort', label: 'Unsigned Short' },
-  { value: 'short', label: 'Signed Short' },
-  { value: 'binary', label: 'Binary' },
-  { value: 'ulong', label: 'Unsigned Long (32-bit)' },
-  { value: 'long', label: 'Signed Long (32-bit)' },
-  { value: 'float', label: 'Float (32-bit)' },
-  { value: 'double', label: 'Double (64-bit)' },
-  { value: 'led', label: 'LED (bit)' },
+/** 显示格式选项 */
+const FORMAT_OPTIONS: { value: DataDisplayFormat; labelKey: TranslationKey }[] = [
+  { value: 'led', labelKey: 'formatLed' },
+  { value: 'short', labelKey: 'formatShort' },
+  { value: 'ushort', labelKey: 'formatUShort' },
+  { value: 'hex', labelKey: 'formatHex' },
+  { value: 'binary', labelKey: 'formatBinary' },
+  { value: 'long', labelKey: 'formatLong' },
+  { value: 'ulong', labelKey: 'formatULong' },
+  { value: 'float', labelKey: 'formatFloat' },
+  { value: 'double', labelKey: 'formatDouble' },
 ];
 
-function isBitArea(area: RegisterArea): boolean {
-  return area === 'coils' || area === 'discreteInputs';
+/** Map display format to i18n key */
+const FORMAT_KEY_MAP: Record<DataDisplayFormat, TranslationKey> = {
+  led: 'formatLed',
+  short: 'formatShort',
+  ushort: 'formatUShort',
+  hex: 'formatHex',
+  binary: 'formatBinary',
+  long: 'formatLong',
+  ulong: 'formatULong',
+  float: 'formatFloat',
+  double: 'formatDouble',
+};
+
+/** 32 位字节序 */
+const BYTE_ORDER_32: ByteOrder32[] = ['ABCD', 'BADC', 'CDAB', 'DCBA'];
+/** 64 位字节序 */
+const BYTE_ORDER_64: ByteOrder64[] = ['ABCDEFGH', 'HGFEDCBA', 'BADCFEHG', 'GHEFCDAB'];
+
+/** 按区域校验默认格式是否可用（位区域只能用 led） */
+function defaultFormatForArea(area: RegisterArea, current: DataDisplayFormat): DataDisplayFormat {
+  if (isBitArea(area)) return 'led';
+  return current === 'led' ? 'hex' : current;
 }
 
-function isWritableArea(area: RegisterArea): boolean {
-  return area === 'coils' || area === 'holdingRegisters';
+/** 读窗口上限：位区域 2000，寄存器区域 125（与协议读上限一致） */
+function maxQuantityForArea(area: RegisterArea): number {
+  return isBitArea(area) ? 2000 : 125;
 }
 
+/** 生成默认标签名称：区域 @起始地址 */
+function generateTabName(areaLabel: string, startAddress: number): string {
+  return `${areaLabel} @${startAddress}`;
+}
+
+/** 格式化单个待写草稿值（16 位 / 位视图） */
+function formatDraftValue(value: number, format: DataDisplayFormat): string {
+  switch (format) {
+    case 'hex':
+      return value.toString(16).toUpperCase().padStart(4, '0');
+    case 'binary':
+      return value.toString(2).padStart(16, '0');
+    case 'short': {
+      const s = value & 0xffff;
+      return String(s <= 0x7fff ? s : s - 0x10000);
+    }
+    case 'led':
+      return Array.from({ length: 16 }, (_, i) => ((value & (1 << (15 - i))) ? '1' : '0')).join('');
+    default:
+      return String(value);
+  }
+}
+
+/**
+ * 寄存器查看器：标签栏（绑定从站）+ 配置条（内联可编辑）+ 数据表（逐行类型 + 行内编辑写入）。
+ * 交互语义对齐 modbus-master：写模式下数据格可直接编辑，暂存草稿后由「写入」整段提交。
+ */
 export function RegisterViewer() {
   const { t } = useI18n();
   const { state, dispatch } = useAppState();
-  const { readRegisters, writeRegister } = useModbusWs();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingTab, setEditingTab] = useState<RegisterViewTab | null>(null);
-  const [writeDialog, setWriteDialog] = useState<{ tabId: string; address: number; currentValue: number } | null>(null);
-  const [writeValue, setWriteValue] = useState('');
+  const { readRegisters, writeRegister, writeRegisters } = useModbusWs();
+
+  const { viewTabs, activeViewTabId, registerData, slaves, slaveStatus, activeSlaveId } = state;
+
+  const activeTab = viewTabs.find((tab) => tab.id === activeViewTabId) ?? null;
+  const boundSlave = activeTab ? slaves.find((s) => s.id === activeTab.slaveId) : undefined;
+  const isRunning = activeTab ? slaveStatus[activeTab.slaveId] === 'running' : false;
+
+  // 标签重命名编辑态
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  // 行内编辑态
+  const [editingCell, setEditingCell] = useState<string | null>(null);
+  const [cellValue, setCellValue] = useState('');
+  const [editingFormatRow, setEditingFormatRow] = useState<string | null>(null);
+  // 写入草稿：地址 -> 待写入值
+  const [writeDraft, setWriteDraft] = useState<Map<number, number>>(new Map());
   const [refreshing, setRefreshing] = useState(false);
 
-  const activeSlave = state.slaves.find(s => s.id === state.activeSlaveId);
-  const activeTabs = useMemo(
-    () => state.viewTabs.filter(tab => tab.slaveId === state.activeSlaveId),
-    [state.viewTabs, state.activeSlaveId],
+  /** 读取标签窗口 */
+  const doRead = useCallback(
+    (tab: RegisterViewTab) => {
+      readRegisters(tab.id, tab.slaveId, tab.area, tab.startAddress, tab.quantity);
+    },
+    [readRegisters],
   );
-  const activeTab = state.viewTabs.find(tab => tab.id === state.activeViewTabId);
-  const registerData = activeTab ? state.registerData[activeTab.id] ?? [] : [];
 
-  // ── Tab management ──
+  /** 更新标签配置 */
+  const updateTab = useCallback(
+    (tabId: string, updates: Partial<RegisterViewTab>) => {
+      const existing = viewTabs.find((tab) => tab.id === tabId);
+      if (!existing) return;
+      dispatch({ type: 'UPDATE_VIEW_TAB', payload: { ...existing, ...updates } });
+    },
+    [dispatch, viewTabs],
+  );
 
-  const handleNewTab = () => {
-    if (!activeSlave) return;
-    setEditingTab({
+  /** 切换标签：同时把活动从站切到该标签绑定的从站 */
+  const selectTab = useCallback(
+    (tab: RegisterViewTab) => {
+      dispatch({ type: 'SET_ACTIVE_VIEW_TAB', payload: tab.id });
+      dispatch({ type: 'SET_ACTIVE_SLAVE', payload: tab.slaveId });
+    },
+    [dispatch],
+  );
+
+  /** 新建标签（绑定当前选中的从站） */
+  const addTab = useCallback(() => {
+    const slaveId = activeSlaveId ?? slaves[0]?.id;
+    const slave = slaves.find((s) => s.id === slaveId);
+    if (!slave) return;
+    const area: RegisterArea = 'holdingRegisters';
+    const startAddress = 0;
+    const tab: RegisterViewTab = {
       id: generateId(),
-      name: 'Coils @ 0',
-      slaveId: activeSlave.id,
-      area: 'holdingRegisters',
-      startAddress: 0,
+      name: generateTabName(t('holdingRegisters'), startAddress),
+      slaveId: slave.id,
+      area,
+      startAddress,
       quantity: 20,
       displayFormat: 'hex',
-      byteOrder32: activeSlave.byteOrder32,
-      byteOrder64: activeSlave.byteOrder64,
+      writeMode: 'multiple',
+      byteOrder32: slave.byteOrder32,
+      byteOrder64: slave.byteOrder64,
+    };
+    dispatch({ type: 'ADD_VIEW_TAB', payload: tab });
+    // 新标签尚未进入 state，直接用其配置发起一次读取
+    readRegisters(tab.id, tab.slaveId, tab.area, tab.startAddress, tab.quantity);
+  }, [activeSlaveId, slaves, dispatch, readRegisters, t]);
+
+  /** 关闭标签 */
+  const closeTab = useCallback(
+    (tabId: string, event: React.MouseEvent) => {
+      event.stopPropagation();
+      dispatch({ type: 'DELETE_VIEW_TAB', payload: tabId });
+    },
+    [dispatch],
+  );
+
+  /** 开始重命名 */
+  const startRename = useCallback((tab: RegisterViewTab) => {
+    setEditingTabId(tab.id);
+    setEditingName(tab.name);
+  }, []);
+
+  /** 确认重命名 */
+  const commitRename = useCallback(
+    (tabId: string) => {
+      const name = editingName.trim();
+      if (name) updateTab(tabId, { name });
+      setEditingTabId(null);
+    },
+    [editingName, updateTab],
+  );
+
+  /** 行内编辑提交：暂存为草稿，不立即发送 */
+  const commitCellEdit = useCallback(
+    (tab: RegisterViewTab, address: number, raw: string, format: DataDisplayFormat, span: number) => {
+      if (span > 1) {
+        // 宽类型（32/64 位）：解析为格式化值后拆分回 span 个 16 位原始值
+        const regs = encodeValueToRegisters(
+          parseDisplayValue(raw, format),
+          format,
+          tab.byteOrder32,
+          tab.byteOrder64,
+        );
+        if (regs.length !== span) {
+          setEditingCell(null);
+          return;
+        }
+        setWriteDraft((prev) => {
+          const next = new Map(prev);
+          for (let i = 0; i < span; i++) next.set(address + i, regs[i]);
+          return next;
+        });
+      } else {
+        const num = parseDisplayValue(raw, format);
+        setWriteDraft((prev) => {
+          const next = new Map(prev);
+          next.set(address, num);
+          return next;
+        });
+      }
+      setEditingCell(null);
+    },
+    [],
+  );
+
+  /** 位区域直接切换草稿值（无需文本输入） */
+  const toggleBitDraft = useCallback((address: number, current: number) => {
+    setWriteDraft((prev) => {
+      const next = new Map(prev);
+      next.set(address, current ? 0 : 1);
+      return next;
     });
-    setDialogOpen(true);
-  };
+  }, []);
 
-  const handleSaveTab = () => {
-    if (!editingTab) return;
-    const existing = state.viewTabs.find(t => t.id === editingTab.id);
-    if (existing) {
-      dispatch({ type: 'UPDATE_VIEW_TAB', payload: editingTab as any });
-    } else {
-      dispatch({ type: 'ADD_VIEW_TAB', payload: editingTab as any });
-    }
-    setDialogOpen(false);
-    setEditingTab(null);
-    // Trigger initial read
-    setTimeout(() => doRead(editingTab.id), 100);
-  };
+  /** 整段批量提交：草稿覆盖 + 未编辑行回填原值 */
+  const submitWrite = useCallback(
+    (tab: RegisterViewTab) => {
+      if (!isRunning || tab.writeMode === 'off' || !isWritableArea(tab.area)) return;
+      const data = registerData[tab.id] ?? [];
+      const count = tab.writeMode === 'single' ? 1 : Math.max(1, tab.quantity);
+      const values: number[] = [];
+      const nextDraft = new Map(writeDraft);
+      for (let i = 0; i < count; i++) {
+        const addr = tab.startAddress + i;
+        const edited = writeDraft.get(addr);
+        if (edited !== undefined) {
+          values.push(edited);
+        } else {
+          const row = data.find((d) => d.address === addr);
+          values.push(row ? row.rawValue : 0);
+        }
+        nextDraft.delete(addr);
+      }
+      if (tab.writeMode === 'single') {
+        writeRegister(tab.slaveId, tab.area, tab.startAddress, values[0] ?? 0);
+      } else {
+        writeRegisters(tab.slaveId, tab.area, tab.startAddress, values);
+      }
+      setWriteDraft(nextDraft);
+    },
+    [isRunning, registerData, writeDraft, writeRegister, writeRegisters],
+  );
 
-  const handleCloseTab = (tabId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    dispatch({ type: 'DELETE_VIEW_TAB', payload: tabId });
-  };
-
-  // ── Data reading ──
-
-  const doRead = useCallback((tabId: string) => {
-    const tab = state.viewTabs.find(t => t.id === tabId);
-    if (!tab) return;
-    readRegisters(tabId, tab.slaveId, tab.area, tab.startAddress, tab.quantity);
-  }, [state.viewTabs, readRegisters]);
-
-  const handleRefresh = () => {
-    if (!activeTab) return;
+  /** 手动读取（带短暂 loading 态） */
+  const handleRead = useCallback(() => {
+    if (!activeTab || !isRunning) return;
     setRefreshing(true);
-    doRead(activeTab.id);
+    doRead(activeTab);
     setTimeout(() => setRefreshing(false), 300);
-  };
+  }, [activeTab, isRunning, doRead]);
 
-  // Auto-read when active tab changes or when active slave starts
+  // 切换标签 / 修改窗口配置 / 从站启动 → 自动重读。
+  // 依赖按原始值拆开，避免因标签对象本身变化（如重命名）而触发多余读取。
+  const activeTabItemId = activeTab?.id ?? null;
+  const activeTabSlaveId = activeTab?.slaveId ?? null;
+  const activeTabArea = activeTab?.area ?? null;
+  const activeTabStart = activeTab?.startAddress ?? 0;
+  const activeTabQuantity = activeTab?.quantity ?? 0;
   useEffect(() => {
-    if (!activeTab) return;
-    const status = state.slaveStatus[activeTab.slaveId];
-    if (status === 'running') {
-      doRead(activeTab.id);
-    }
-  }, [activeTab?.id, activeTab?.area, activeTab?.startAddress, activeTab?.quantity]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!activeTabItemId || !activeTabSlaveId || !activeTabArea) return;
+    if (slaveStatus[activeTabSlaveId] !== 'running') return;
+    readRegisters(activeTabItemId, activeTabSlaveId, activeTabArea, activeTabStart, activeTabQuantity);
+  }, [
+    activeTabItemId,
+    activeTabSlaveId,
+    activeTabArea,
+    activeTabStart,
+    activeTabQuantity,
+    slaveStatus,
+    readRegisters,
+  ]);
 
-  // ── Write ──
+  // 切换标签时清理草稿与编辑态，避免跨标签串值
+  useEffect(() => {
+    setWriteDraft(new Map());
+    setEditingCell(null);
+    setEditingFormatRow(null);
+    setEditingTabId(null);
+  }, [activeTabItemId]);
 
-  const handleWriteClick = (address: number, currentValue: number) => {
-    if (!activeTab) return;
-    setWriteDialog({ tabId: activeTab.id, address, currentValue });
-    if (isBitArea(activeTab.area)) {
-      setWriteValue(currentValue ? '1' : '0');
-    } else {
-      setWriteValue(String(currentValue));
-    }
-  };
-
-  const handleWriteConfirm = () => {
-    if (!writeDialog || !activeTab) return;
-    const val = parseInt(writeValue, activeTab.displayFormat === 'hex' ? 16 : 10) || 0;
-    writeRegister(activeTab.slaveId, activeTab.area, writeDialog.address, val);
-    setWriteDialog(null);
-    // Refresh after a short delay
-    setTimeout(() => doRead(activeTab.id), 100);
-  };
-
-  // ── Render ──
-
-  if (!activeSlave) {
-    return (
-      <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-        Select a slave to view register data
-      </div>
-    );
-  }
+  const quantityMax = activeTab ? maxQuantityForArea(activeTab.area) : 125;
+  const canWrite = activeTab
+    ? isRunning && isWritableArea(activeTab.area) && activeTab.writeMode !== 'off'
+    : false;
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Tab bar */}
-      <div className="flex items-center gap-0.5 px-2 py-1 border-b border-border bg-surface shrink-0 overflow-x-auto">
-        {activeTabs.length === 0 && (
-          <span className="text-[10px] text-muted-foreground px-2 py-1">
-            No view tabs — create one to inspect registers
-          </span>
+    <div className="flex h-full min-w-0 flex-col">
+      {/* 标签栏 */}
+      <div className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-surface px-1.5 pt-1">
+        {viewTabs.length === 0 && (
+          <span className="px-2 py-1 text-[10px] text-muted-foreground">{t('empty')}</span>
         )}
-        {activeTabs.map((tab) => {
-          const isActive = tab.id === state.activeViewTabId;
+        {viewTabs.map((tab) => {
+          const isActive = tab.id === activeTab?.id;
+          const isEditing = tab.id === editingTabId;
+          const slaveName = slaves.find((s) => s.id === tab.slaveId)?.name ?? '—';
           return (
             <div
               key={tab.id}
-              className={`flex items-center gap-1 px-2 py-1 rounded-t text-[10px] cursor-pointer whitespace-nowrap transition-colors ${
+              className={`group flex shrink-0 cursor-pointer items-center gap-1 rounded-t px-2 py-1 text-[10px] transition-colors ${
                 isActive
-                  ? 'bg-card text-foreground border border-border border-b-transparent -mb-px'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
+                  ? 'border border-b-transparent border-border bg-card text-foreground -mb-px'
+                  : 'text-muted-foreground hover:bg-card/50 hover:text-foreground'
               }`}
-              onClick={() => dispatch({ type: 'SET_ACTIVE_VIEW_TAB', payload: tab.id })}
+              onClick={() => !isEditing && selectTab(tab)}
+              onDoubleClick={() => startRename(tab)}
+              title={t('renameTab')}
             >
-              <span>{tab.name}</span>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-3.5 w-3.5 ml-1 opacity-60 hover:opacity-100"
-                onClick={(e) => handleCloseTab(tab.id, e)}
-              >
-                <X className="w-2.5 h-2.5" />
-              </Button>
+              {isEditing ? (
+                <input
+                  autoFocus
+                  value={editingName}
+                  onChange={(e) => setEditingName(e.target.value)}
+                  onBlur={() => commitRename(tab.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitRename(tab.id);
+                    if (e.key === 'Escape') setEditingTabId(null);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-20 rounded border border-primary/40 bg-background px-1 py-0.5 text-[10px] text-foreground outline-none"
+                />
+              ) : (
+                <>
+                  <span className="max-w-32 truncate">{tab.name || '—'}</span>
+                  <span
+                    className={`max-w-24 truncate rounded px-1 py-0.5 text-[9px] leading-none ${
+                      isActive ? 'bg-primary/15 text-primary' : 'bg-foreground/5 text-muted-foreground'
+                    }`}
+                    title={slaveName}
+                  >
+                    {slaveName}
+                  </span>
+                </>
+              )}
+              {!isEditing && (
+                <button
+                  onClick={(e) => closeTab(tab.id, e)}
+                  className="rounded p-0.5 text-muted-foreground/50 opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground group-hover:opacity-100"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
             </div>
           );
         })}
-        <Button size="icon" variant="ghost" className="h-5 w-5 ml-auto shrink-0" onClick={handleNewTab} title={t('newTab')}>
-          <Plus className="w-3 h-3" />
-        </Button>
+        <button
+          onClick={addTab}
+          disabled={slaves.length === 0}
+          className="ml-1 flex shrink-0 items-center gap-1 rounded px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-surface-container hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          title={t('addTab')}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
       </div>
 
-      {/* Config bar */}
+      {/* 配置条 */}
       {activeTab && (
-        <div className="flex items-center gap-3 px-3 py-1.5 border-b border-border bg-surface/50 shrink-0 text-[10px]">
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">{t('registerArea')}:</span>
-            <span className="font-medium">{AREA_OPTIONS.find(a => a.value === activeTab.area)?.label ?? activeTab.area}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">{t('startAddress')}:</span>
-            <span className="font-mono-data font-medium">{activeTab.startAddress}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">{t('registerCount')}:</span>
-            <span className="font-mono-data font-medium">{activeTab.quantity}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">{t('displayFormat')}:</span>
-            <span className="font-medium">{FORMAT_OPTIONS.find(f => f.value === activeTab.displayFormat)?.label ?? activeTab.displayFormat}</span>
-          </div>
-          <div className="ml-auto flex items-center gap-1">
-            <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={handleRefresh}>
-              <RefreshCw className={`w-3 h-3 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
-              Refresh
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border bg-surface px-3 py-2">
+          {/* 绑定从站 */}
+          <span className="inline-flex max-w-40 items-center gap-1.5 rounded border border-primary/30 bg-primary/[0.08] px-2 py-0.5 text-[11px] text-primary">
+            <Radio className="h-3 w-3 shrink-0" />
+            <span className="truncate font-medium">{boundSlave?.name ?? '—'}</span>
+            <span className="text-[10px] text-muted-foreground">#{boundSlave?.slaveId ?? '—'}</span>
+          </span>
+
+          {/* 区域 */}
+          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            {t('registerArea')}
+            <Select
+              value={activeTab.area}
+              onValueChange={(v: RegisterArea) =>
+                updateTab(activeTab.id, {
+                  area: v,
+                  displayFormat: defaultFormatForArea(v, activeTab.displayFormat),
+                  writeMode: isWritableArea(v) ? activeTab.writeMode : 'off',
+                  formatOverrides: undefined,
+                })
+              }
+            >
+              <SelectTrigger className="h-6 w-44 border-border/40 bg-background px-2 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {AREA_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                    {`${t(opt.labelKey)} (${opt.fcHint})`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+
+          <span className="h-4 w-px bg-border/30" />
+
+          {/* 起始地址 */}
+          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            {t('startAddress')}
+            <Input
+              type="number"
+              min={0}
+              max={65535}
+              value={activeTab.startAddress}
+              onChange={(e) => updateTab(activeTab.id, { startAddress: Number(e.target.value) || 0 })}
+              className="h-6 w-20 border-border/40 bg-background px-2 text-xs"
+            />
+          </label>
+
+          <span className="h-4 w-px bg-border/30" />
+
+          {/* 寄存器数量 */}
+          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            {t('registerCount')}
+            <Input
+              type="number"
+              min={1}
+              max={quantityMax}
+              value={activeTab.quantity}
+              onChange={(e) =>
+                updateTab(activeTab.id, {
+                  quantity: Math.min(quantityMax, Math.max(1, Number(e.target.value) || 1)),
+                })
+              }
+              className="h-6 w-16 border-border/40 bg-background px-2 text-xs"
+            />
+          </label>
+
+          {/* 默认显示格式（可被表格逐行覆盖） */}
+          <span className="hidden h-4 w-px bg-border/30 md:inline-block" />
+          <label
+            className="hidden items-center gap-1.5 text-[11px] text-muted-foreground md:flex"
+            title={t('defaultFormatHint')}
+          >
+            {t('defaultFormat')}
+            <Select
+              value={activeTab.displayFormat}
+              onValueChange={(v) => {
+                const next = v as DataDisplayFormat;
+                updateTab(activeTab.id, {
+                  displayFormat: next,
+                  // 默认格式变更后逐行覆盖已无意义，一并清理
+                  formatOverrides: undefined,
+                });
+              }}
+            >
+              <SelectTrigger className="h-6 w-40 border-border/40 bg-background px-2 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FORMAT_OPTIONS.filter((opt) => isWordArea(activeTab.area) || opt.value === 'led').map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                    {t(opt.labelKey)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+
+          {/* 32 位字节序 */}
+          {(activeTab.displayFormat === 'long' ||
+            activeTab.displayFormat === 'ulong' ||
+            activeTab.displayFormat === 'float') && (
+            <label className="hidden items-center gap-1.5 text-[11px] text-muted-foreground lg:flex">
+              {t('byteOrder32')}
+              <Select
+                value={activeTab.byteOrder32}
+                onValueChange={(v) => updateTab(activeTab.id, { byteOrder32: v as ByteOrder32 })}
+              >
+                <SelectTrigger className="h-6 w-20 border-border/40 bg-background px-2 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BYTE_ORDER_32.map((order) => (
+                    <SelectItem key={order} value={order} className="text-xs">
+                      {order}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          )}
+
+          {/* 64 位字节序 */}
+          {activeTab.displayFormat === 'double' && (
+            <label className="hidden items-center gap-1.5 text-[11px] text-muted-foreground lg:flex">
+              {t('byteOrder64')}
+              <Select
+                value={activeTab.byteOrder64}
+                onValueChange={(v) => updateTab(activeTab.id, { byteOrder64: v as ByteOrder64 })}
+              >
+                <SelectTrigger className="h-6 w-24 border-border/40 bg-background px-2 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BYTE_ORDER_64.map((order) => (
+                    <SelectItem key={order} value={order} className="text-xs">
+                      {order}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          )}
+
+          <span className="h-4 w-px bg-border/30" />
+
+          {/* 写模式（等价于 master 的写功能码） */}
+          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            {t('writeMode')}
+            <Select
+              value={activeTab.writeMode}
+              disabled={!isWritableArea(activeTab.area)}
+              onValueChange={(v) => updateTab(activeTab.id, { writeMode: v as WriteMode })}
+            >
+              <SelectTrigger className="h-6 w-40 border-border/40 bg-background px-2 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off" className="text-xs">
+                  {t('writeModeOff')}
+                </SelectItem>
+                {isWritableArea(activeTab.area) && (
+                  <>
+                    <SelectItem value="single" className="text-xs">
+                      {t('writeModeSingle')}
+                    </SelectItem>
+                    <SelectItem value="multiple" className="text-xs">
+                      {t('writeModeMultiple')}
+                    </SelectItem>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+          </label>
+
+          {/* 操作按钮 */}
+          <div className="ml-auto flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!isRunning}
+              onClick={handleRead}
+              className="h-7 border-primary/30 bg-primary/10 px-2.5 text-xs text-primary hover:bg-primary/20 hover:text-primary"
+            >
+              <RefreshCw className={`mr-1 h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+              {t('read')}
             </Button>
+            {isWritableArea(activeTab.area) && activeTab.writeMode !== 'off' && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!canWrite}
+                onClick={() => submitWrite(activeTab)}
+                className={`h-7 border-success/40 px-2.5 text-xs ${
+                  writeDraft.size > 0
+                    ? 'bg-success/15 text-success hover:bg-success/25'
+                    : 'border-border/40 bg-surface-container text-muted-foreground hover:bg-surface-container/80'
+                }`}
+              >
+                <Upload className="mr-1 h-3 w-3" />
+                {t('write')}
+              </Button>
+            )}
+            {!isRunning && (
+              <Badge variant="outline" className="border-border/40 px-2 py-0.5 text-[10px]">
+                {t('stopped')}
+              </Badge>
+            )}
           </div>
         </div>
       )}
 
-      {/* Data table */}
-      <ScrollArea className="flex-1">
-        {activeTab ? (
-          <Table>
-            <TableHeader className="sticky top-0 bg-surface z-10">
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="w-16 text-[10px] font-semibold">{t('address')}</TableHead>
-                <TableHead className="w-28 text-[10px] font-semibold">{t('rawHex')}</TableHead>
-                <TableHead className="w-28 text-[10px] font-semibold">{t('rawDec')}</TableHead>
-                <TableHead className="text-[10px] font-semibold">{t('formattedValue')}</TableHead>
-                <TableHead className="w-20 text-[10px] font-semibold">{t('type')}</TableHead>
-                {isWritableArea(activeTab.area) && (
-                  <TableHead className="w-16 text-[10px] font-semibold text-right">Action</TableHead>
-                )}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {registerData.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={isWritableArea(activeTab.area) ? 6 : 5} className="text-center py-8 text-xs text-muted-foreground">
-                    {state.slaveStatus[activeTab.slaveId] === 'running'
-                      ? 'Click Refresh to load data'
-                      : 'Start the slave to view register data'}
-                  </TableCell>
-                </TableRow>
-              )}
-              {registerData.map((row) => (
-                <TableRow key={row.address} className="h-7 hover:bg-card/50">
-                  <TableCell className="py-0 font-mono-data text-[11px] text-muted-foreground">
-                    {row.address.toString().padStart(5, '0')}
-                  </TableCell>
-                  <TableCell className="py-0 font-mono-data text-[11px] text-data">
-                    {isBitArea(activeTab.area)
-                      ? (row.rawValue ? '1' : '0')
-                      : `0x${row.rawValue.toString(16).toUpperCase().padStart(4, '0')}`}
-                  </TableCell>
-                  <TableCell className="py-0 font-mono-data text-[11px]">
-                    {row.rawValue}
-                  </TableCell>
-                  <TableCell className="py-0 font-mono-data text-[11px] text-foreground">
-                    {formatRegisterValue(
-                      [row.rawValue],
-                      isBitArea(activeTab.area) ? 'led' : activeTab.displayFormat,
-                      activeTab.byteOrder32,
-                      activeTab.byteOrder64,
+      {/* 数据表格 */}
+      {activeTab ? (
+        <DataTable
+          tab={activeTab}
+          data={registerData[activeTab.id] ?? []}
+          writeDraft={writeDraft}
+          onToggleBit={toggleBitDraft}
+          onUpdate={updateTab}
+          editingCell={editingCell}
+          setEditingCell={setEditingCell}
+          cellValue={cellValue}
+          setCellValue={setCellValue}
+          onCommitCellEdit={commitCellEdit}
+          editingFormatRow={editingFormatRow}
+          setEditingFormatRow={setEditingFormatRow}
+          emptyHint={
+            slaveStatus[activeTab.slaveId] === 'running' ? t('noDataHint') : t('slaveStoppedHint')
+          }
+        />
+      ) : (
+        <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
+          {slaves.length > 0 ? t('selectTabHint') : t('noSlaveSelected')}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========== 数据表格 ========== */
+
+/** 16 个可点击位开关（寄存器视图的 led 格式） */
+function LedBits({
+  value,
+  editable,
+  drafted,
+  onChange,
+}: {
+  value: number;
+  editable: boolean;
+  drafted: boolean;
+  onChange: (raw: number) => void;
+}) {
+  const groups: number[][] = [
+    [15, 14, 13, 12],
+    [11, 10, 9, 8],
+    [7, 6, 5, 4],
+    [3, 2, 1, 0],
+  ];
+  return (
+    <div className="flex items-center gap-1.5">
+      {groups.map((g, gi) => (
+        <div key={gi} className="flex items-center gap-0.5">
+          {g.map((bit) => {
+            const on = (value >> bit) & 1;
+            return (
+              <button
+                key={bit}
+                type="button"
+                disabled={!editable}
+                onClick={() => onChange(value ^ (1 << bit))}
+                title={`bit${bit}`}
+                className={`flex h-4 w-4 items-center justify-center rounded-[2px] font-mono text-[9px] leading-none transition-colors ${
+                  drafted ? 'ring-1 ring-amber-400/60' : ''
+                } ${
+                  on ? 'bg-success text-background' : 'bg-foreground/10 text-muted-foreground'
+                } ${editable ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+              >
+                {on ? '1' : '0'}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DataTable({
+  tab,
+  data,
+  writeDraft,
+  onToggleBit,
+  onUpdate,
+  editingCell,
+  setEditingCell,
+  cellValue,
+  setCellValue,
+  onCommitCellEdit,
+  editingFormatRow,
+  setEditingFormatRow,
+  emptyHint,
+}: {
+  tab: RegisterViewTab;
+  data: RegisterData[];
+  writeDraft: Map<number, number>;
+  onToggleBit: (address: number, current: number) => void;
+  onUpdate: (tabId: string, updates: Partial<RegisterViewTab>) => void;
+  editingCell: string | null;
+  setEditingCell: (key: string | null) => void;
+  cellValue: string;
+  setCellValue: (value: string) => void;
+  onCommitCellEdit: (
+    tab: RegisterViewTab,
+    address: number,
+    raw: string,
+    format: DataDisplayFormat,
+    span: number,
+  ) => void;
+  editingFormatRow: string | null;
+  setEditingFormatRow: (address: string | null) => void;
+  emptyHint: string;
+}) {
+  const { t } = useI18n();
+  const bitArea = isBitArea(tab.area);
+  const wordArea = isWordArea(tab.area);
+  const writable = isWritableArea(tab.area) && tab.writeMode !== 'off';
+  const isSingleWrite = writable && tab.writeMode === 'single';
+  const rowCount = isSingleWrite ? 1 : Math.max(1, tab.quantity);
+
+  const rows: RegisterData[] = Array.from({ length: rowCount }, (_, i) => {
+    const address = tab.startAddress + i;
+    return data.find((d) => d.address === address) ?? { address, rawValue: 0 };
+  });
+
+  // 逐行类型映射：计算每个地址是分组起点还是被宽类型占用
+  const layout = useMemo(
+    () =>
+      resolveRegisterLayout({
+        startAddress: tab.startAddress,
+        quantity: rowCount,
+        isWordType: wordArea,
+        defaultFormat: tab.displayFormat,
+        formatOverrides: tab.formatOverrides,
+      }),
+    [tab.startAddress, rowCount, wordArea, tab.displayFormat, tab.formatOverrides],
+  );
+
+  const hasWideGroup = Array.from(layout.values()).some((r) => r.role === 'start' && r.span > 1);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {data.length === 0 && (
+        <div className="shrink-0 border-b border-border/20 px-3 py-1 text-[10px] text-muted-foreground/60">
+          {emptyHint}
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-auto">
+        <table className="w-full border-collapse text-xs">
+          <thead className="sticky top-0 z-10">
+            <tr className="border-b border-border/30 bg-surface-container/90 backdrop-blur">
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('address')}</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('rawHex')}</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('rawDec')}</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('type')}</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                {t('formattedValue')}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((item, index) => {
+              const cellKey = `${item.address}:${index}`;
+              const isEditingThis = editingCell === cellKey;
+              const formatEditing = editingFormatRow === String(item.address);
+              const res = layout.get(item.address);
+              const isGroupStart = res?.role === 'start' || !res;
+              const groupFits = res?.fits ?? true;
+              const groupSpan = res?.span ?? 1;
+              const format = res?.format ?? tab.displayFormat;
+              // 仅分组起点可编辑；纯展示草稿不依赖从站是否运行，提交时才要求运行中
+              const canEdit = isGroupStart && writable;
+              const isDrafted = writeDraft.has(item.address);
+              const draftValue = writeDraft.get(item.address);
+              const displayValue =
+                isGroupStart && groupFits
+                  ? formatRegisterValue(rows, index, format, tab.byteOrder32, tab.byteOrder64)
+                  : '—';
+              // 宽类型整组草稿展示：整组地址均已编辑时按草稿重算格式化值
+              let groupDisplay = displayValue;
+              if (isGroupStart && groupSpan > 1) {
+                const addrs = Array.from({ length: groupSpan }, (_, k) => rows[index + k]?.address ?? 0);
+                const drafted = addrs.map((a) => writeDraft.get(a));
+                if (drafted.every((v) => v !== undefined)) {
+                  const eff: RegisterData[] = addrs.map((a, k) => ({
+                    address: a,
+                    rawValue: drafted[k] as number,
+                  }));
+                  groupDisplay = formatRegisterValue(eff, 0, format, tab.byteOrder32, tab.byteOrder64);
+                }
+              }
+              const formatDisabled = !isGroupStart || !wordArea;
+              return (
+                <tr
+                  key={cellKey}
+                  className={`h-12 border-b border-border/20 transition-colors ${
+                    isDrafted
+                      ? 'bg-amber-500/[0.07]'
+                      : 'odd:bg-surface/40 even:bg-transparent hover:bg-surface-container/50'
+                  }`}
+                >
+                  {/* 地址 */}
+                  <td className="w-18 px-3 py-1.5 font-mono text-[11px] font-semibold">
+                    {isDrafted && (
+                      <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle" />
                     )}
-                  </TableCell>
-                  <TableCell className="py-0 text-[10px] text-muted-foreground">
-                    {isWritableArea(activeTab.area) ? t('writable') : t('readOnly')}
-                  </TableCell>
-                  {isWritableArea(activeTab.area) && (
-                    <TableCell className="py-0 text-right">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-6 w-6"
-                        onClick={() => handleWriteClick(row.address, row.rawValue)}
+                    {item.address}
+                  </td>
+                  {/* 原始 HEX */}
+                  <td className="w-24 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+                    {bitArea
+                      ? item.rawValue
+                        ? '1'
+                        : '0'
+                      : item.rawValue.toString(16).toUpperCase().padStart(4, '0')}
+                  </td>
+                  {/* 原始 DEC */}
+                  <td className="w-24 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+                    {item.rawValue}
+                  </td>
+                  {/* 数据类型（逐行格式切换，写入 formatOverrides） */}
+                  <td className="w-48 px-3 py-1.5">
+                    {!isGroupStart ? (
+                      <span className="px-2 font-mono text-[10px] text-muted-foreground/40">—</span>
+                    ) : formatEditing ? (
+                      <Select
+                        value={format}
+                        onValueChange={(v) => {
+                          const next = v as DataDisplayFormat;
+                          const overrides = { ...(tab.formatOverrides ?? {}) };
+                          if (next === tab.displayFormat) {
+                            // 选回默认格式 → 移除 override
+                            delete overrides[item.address];
+                          } else {
+                            overrides[item.address] = next;
+                          }
+                          onUpdate(tab.id, {
+                            formatOverrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+                          });
+                          setEditingFormatRow(null);
+                        }}
                       >
-                        <Pencil className="w-3 h-3" />
-                      </Button>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-            {activeTabs.length > 0 ? 'Select a tab to view data' : 'Create a view tab to start'}
+                        <SelectTrigger className="h-6 w-42 border-border/40 bg-background px-2 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {FORMAT_OPTIONS.filter((opt) => wordArea || opt.value === 'led').map((opt) => {
+                            // 空间不足 / 非寄存器区域：禁用无法应用的宽类型
+                            const fits = formatFitsAt(opt.value, index, rowCount, wordArea);
+                            return (
+                              <SelectItem
+                                key={opt.value}
+                                value={opt.value}
+                                disabled={!fits}
+                                className="text-xs"
+                              >
+                                {t(opt.labelKey)}
+                                {!fits ? ` (${t('notEnoughRegisters')})` : ''}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className={`cursor-pointer border-transparent px-2 py-0.5 font-mono text-[10px] ${
+                          formatDisabled
+                            ? 'cursor-not-allowed bg-foreground/5 text-muted-foreground/40'
+                            : 'bg-foreground/5 ' +
+                              (format === 'float' || format === 'double'
+                                ? 'text-primary'
+                                : format === 'led'
+                                  ? 'text-success'
+                                  : 'text-amber-500')
+                        } ${res?.overridden ? 'ring-1 ring-primary/40' : ''}`}
+                        onClick={() => {
+                          if (formatDisabled) return;
+                          setEditingFormatRow(String(item.address));
+                        }}
+                        title={wordArea ? undefined : t('wideTypeRequiresRegisters')}
+                      >
+                        {t(FORMAT_KEY_MAP[format])}
+                        {res?.overridden ? ' *' : ''}
+                      </Badge>
+                    )}
+                  </td>
+                  {/* 格式化值（行内编辑；位区域为开关，led 为位开关组） */}
+                  <td className="w-48 px-3 py-1.5">
+                    {bitArea ? (
+                      <button
+                        type="button"
+                        disabled={!canEdit}
+                        onClick={() =>
+                          onToggleBit(item.address, draftValue ?? item.rawValue)
+                        }
+                        className={`rounded border px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                          (draftValue ?? item.rawValue)
+                            ? 'border-success/40 bg-success/15 text-success'
+                            : 'border-border/40 bg-foreground/5 text-muted-foreground'
+                        } ${canEdit ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-70'} ${
+                          isDrafted ? 'ring-1 ring-amber-400/60' : ''
+                        }`}
+                      >
+                        {(draftValue ?? item.rawValue) ? '1' : '0'}
+                      </button>
+                    ) : format === 'led' ? (
+                      <LedBits
+                        value={draftValue ?? item.rawValue}
+                        editable={canEdit}
+                        drafted={isDrafted}
+                        onChange={(raw) => onCommitCellEdit(tab, item.address, String(raw), 'led', 1)}
+                      />
+                    ) : isEditingThis ? (
+                      <input
+                        autoFocus
+                        value={cellValue}
+                        onChange={(e) => setCellValue(e.target.value)}
+                        onBlur={() => onCommitCellEdit(tab, item.address, cellValue, format, groupSpan)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            onCommitCellEdit(tab, item.address, cellValue, format, groupSpan);
+                          }
+                          if (e.key === 'Escape') setEditingCell(null);
+                        }}
+                        disabled={!canEdit}
+                        className="w-42 rounded border border-primary/40 bg-background px-1.5 py-0.5 font-mono text-xs text-foreground outline-none"
+                      />
+                    ) : (
+                      <span
+                        className={`rounded px-1.5 py-0.5 font-mono ${
+                          canEdit ? 'cursor-pointer text-cyan-400 hover:bg-primary/10' : 'text-foreground'
+                        } ${isDrafted ? 'text-amber-400' : ''}`}
+                        onClick={() => {
+                          if (!canEdit) return;
+                          setEditingCell(cellKey);
+                          setCellValue(
+                            formatRegisterValue(rows, index, format, tab.byteOrder32, tab.byteOrder64),
+                          );
+                        }}
+                      >
+                        {groupSpan > 1
+                          ? groupDisplay
+                          : isDrafted && draftValue !== undefined
+                            ? formatDraftValue(draftValue, format)
+                            : displayValue}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {rows.length > 0 && hasWideGroup && (
+          <div className="px-3 py-1 text-[10px] text-muted-foreground/50">
+            {t('perRowFormatHint')}
           </div>
         )}
-      </ScrollArea>
-
-      {/* New/Edit Tab Dialog */}
-      {editingTab && (
-        <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) { setDialogOpen(false); setEditingTab(null); } }}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-sm">
-                {state.viewTabs.find(t => t.id === editingTab.id) ? 'Edit View' : 'New View'}
-              </DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs">{t('tabName')}</label>
-                <Input
-                  size="sm"
-                  value={editingTab.name}
-                  onChange={(e) => setEditingTab({ ...editingTab, name: e.target.value })}
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <label className="text-xs">{t('registerArea')}</label>
-                <Select
-                  value={editingTab.area}
-                  onValueChange={(v: RegisterArea) => {
-                    const isBit = isBitArea(v);
-                    setEditingTab({
-                      ...editingTab,
-                      area: v,
-                      displayFormat: isBit ? 'led' : 'hex',
-                    });
-                  }}
-                >
-                  <SelectTrigger className="mt-1 h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {AREA_OPTIONS.map(opt => (
-                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs">{t('startAddress')}</label>
-                  <Input
-                    size="sm"
-                    type="number"
-                    min={0}
-                    value={editingTab.startAddress}
-                    onChange={(e) => setEditingTab({ ...editingTab, startAddress: Math.max(0, parseInt(e.target.value) || 0) })}
-                    className="mt-1"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs">{t('registerCount')}</label>
-                  <Input
-                    size="sm"
-                    type="number"
-                    min={1}
-                    max={1000}
-                    value={editingTab.quantity}
-                    onChange={(e) => setEditingTab({ ...editingTab, quantity: Math.min(1000, Math.max(1, parseInt(e.target.value) || 1)) })}
-                    className="mt-1"
-                  />
-                </div>
-              </div>
-              {!isBitArea(editingTab.area) && (
-                <div>
-                  <label className="text-xs">{t('displayFormat')}</label>
-                  <Select
-                    value={editingTab.displayFormat}
-                    onValueChange={(v: DataDisplayFormat) => setEditingTab({ ...editingTab, displayFormat: v })}
-                  >
-                    <SelectTrigger className="mt-1 h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {FORMAT_OPTIONS.filter(f => f.value !== 'led').map(opt => (
-                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              {!isBitArea(editingTab.area) && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs">{t('byteOrder32')}</label>
-                    <Select
-                      value={editingTab.byteOrder32}
-                      onValueChange={(v: ByteOrder32) => setEditingTab({ ...editingTab, byteOrder32: v })}
-                    >
-                      <SelectTrigger className="mt-1 h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ABCD">ABCD</SelectItem>
-                        <SelectItem value="DCBA">DCBA</SelectItem>
-                        <SelectItem value="BADC">BADC</SelectItem>
-                        <SelectItem value="CDAB">CDAB</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="text-xs">{t('byteOrder64')}</label>
-                    <Select
-                      value={editingTab.byteOrder64}
-                      onValueChange={(v: ByteOrder64) => setEditingTab({ ...editingTab, byteOrder64: v })}
-                    >
-                      <SelectTrigger className="mt-1 h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ABCDEFGH">ABCDEFGH</SelectItem>
-                        <SelectItem value="HGFEDCBA">HGFEDCBA</SelectItem>
-                        <SelectItem value="BADCFEHG">BADCFEHG</SelectItem>
-                        <SelectItem value="GHEFCDAB">GHEFCDAB</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" size="sm" onClick={() => { setDialogOpen(false); setEditingTab(null); }}>
-                {t('cancel')}
-              </Button>
-              <Button size="sm" onClick={handleSaveTab}>{t('save')}</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {/* Write Dialog */}
-      {writeDialog && activeTab && (
-        <Dialog open={!!writeDialog} onOpenChange={(open) => { if (!open) setWriteDialog(null); }}>
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="text-sm">
-                {t('writeValue')} — {activeTab.area}[{writeDialog.address}]
-              </DialogTitle>
-            </DialogHeader>
-            <div>
-              <label className="text-xs">Value (base: {activeTab.displayFormat === 'hex' ? 'hex' : 'decimal'})</label>
-              <Input
-                size="sm"
-                value={writeValue}
-                onChange={(e) => setWriteValue(e.target.value)}
-                className="mt-1 font-mono-data"
-                autoFocus
-              />
-              {isBitArea(activeTab.area) && (
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  Enter 0 for OFF, 1 for ON
-                </p>
-              )}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" size="sm" onClick={() => setWriteDialog(null)}>
-                {t('cancel')}
-              </Button>
-              <Button size="sm" onClick={handleWriteConfirm}>{t('write')}</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      </div>
     </div>
   );
 }

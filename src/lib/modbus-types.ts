@@ -24,6 +24,21 @@ export type DataDisplayFormat =
 
 export type RegisterArea = 'coils' | 'discreteInputs' | 'holdingRegisters' | 'inputRegisters';
 
+/** 位（1 bit）区域：线圈 / 离散输入 */
+export function isBitArea(area: RegisterArea): boolean {
+  return area === 'coils' || area === 'discreteInputs';
+}
+
+/** 字（16 bit）区域：保持寄存器 / 输入寄存器 */
+export function isWordArea(area: RegisterArea): boolean {
+  return area === 'holdingRegisters' || area === 'inputRegisters';
+}
+
+/** 可写区域：线圈（FC05/15）/ 保持寄存器（FC06/16） */
+export function isWritableArea(area: RegisterArea): boolean {
+  return area === 'coils' || area === 'holdingRegisters';
+}
+
 // ── ModBus Function Codes (from libmodbus modbus.h) ──
 
 export const MODBUS_FC = {
@@ -213,14 +228,27 @@ export function createSlaveMemory(config: SlaveConfig): SlaveMemory {
 
 // ── View Tab (for register viewer tabs) ──
 
+/**
+ * 视图写入模式（等价于 master 的"写功能码"选择）：
+ * - `off`      只读视图，数据格不可编辑
+ * - `single`   单点写：线圈 FC05 / 保持寄存器 FC06，仅起始地址一行可写
+ * - `multiple` 区间写：线圈 FC15 / 保持寄存器 FC16，整段窗口可写
+ */
+export type WriteMode = 'off' | 'single' | 'multiple';
+
 export interface RegisterViewTab {
   id: string;
   name: string;
+  /** 应用内部从站 id（非 ModBus 单元号） */
   slaveId: string;
   area: RegisterArea;
   startAddress: number;
   quantity: number;
   displayFormat: DataDisplayFormat;
+  /** 逐行类型映射：分组起始地址 -> 该行的显示格式（覆盖标签默认 displayFormat）。
+   *  仅记录分组起始地址；32/64 位类型占用的后续地址不在此表中。 */
+  formatOverrides?: Record<number, DataDisplayFormat>;
+  writeMode: WriteMode;
   byteOrder32: ByteOrder32;
   byteOrder64: ByteOrder64;
 }

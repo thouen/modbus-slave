@@ -27,7 +27,7 @@ export type SlaveServerMessage =
       payload: { slaveId: string; changes: Array<{ area: RegisterArea; address: number; value: number }> };
     }
   | { type: 'read_response'; payload: { tabId: string; data: RegisterData[] } }
-  | { type: 'write_response'; payload: { success: boolean; error?: string } }
+  | { type: 'write_response'; payload: { slaveId: string; success: boolean; error?: string } }
   | { type: 'pong'; payload: null }
   | { type: 'error'; payload: { message: string } };
 

@@ -1,13 +1,16 @@
 'use client';
 
 import { createContext, useContext, useEffect, useReducer, type ReactNode } from 'react';
-import type {
-  SlaveConfig,
-  RegisterArea,
-  RegisterData,
-  LogEntry,
-  RegisterViewTab,
-  SlaveStatus,
+import {
+  isBitArea,
+  isWritableArea,
+  type SlaveConfig,
+  type RegisterArea,
+  type RegisterData,
+  type LogEntry,
+  type RegisterViewTab,
+  type SlaveStatus,
+  type WriteMode,
 } from '@/lib/modbus-types';
 import { generateId } from '@/lib/modbus-utils';
 
@@ -70,6 +73,30 @@ const initialState: AppState = {
   logs: [],
 };
 
+/**
+ * 兼容旧版持久化视图标签：补齐新增字段（writeMode / formatOverrides / 字节序 / 数量）。
+ * 缺省写模式按区域推断：可写区域默认 multiple（保留老用户的写入能力），只读区域 off。
+ */
+export function migrateViewTab(tab: Partial<RegisterViewTab>): RegisterViewTab {
+  const area: RegisterArea = tab.area ?? 'holdingRegisters';
+  const fallbackWriteMode: WriteMode = isWritableArea(area) ? 'multiple' : 'off';
+  const overrides = tab.formatOverrides;
+  return {
+    id: tab.id ?? generateId(),
+    name: tab.name ?? '',
+    slaveId: tab.slaveId ?? '',
+    area,
+    startAddress: tab.startAddress ?? 0,
+    quantity: tab.quantity ?? 20,
+    displayFormat: tab.displayFormat ?? (isBitArea(area) ? 'led' : 'hex'),
+    formatOverrides:
+      overrides && Object.keys(overrides).length > 0 ? overrides : undefined,
+    writeMode: tab.writeMode ?? fallbackWriteMode,
+    byteOrder32: tab.byteOrder32 ?? 'ABCD',
+    byteOrder64: tab.byteOrder64 ?? 'ABCDEFGH',
+  };
+}
+
 /** 从 localStorage 恢复持久化配置 */
 function loadPersistedState(): AppState {
   if (typeof window === 'undefined') return initialState;
@@ -78,7 +105,7 @@ function loadPersistedState(): AppState {
     if (!raw) return initialState;
     const parsed = JSON.parse(raw) as Partial<AppState>;
     const slaves = parsed.slaves ?? [];
-    const viewTabs = parsed.viewTabs ?? [];
+    const viewTabs = (parsed.viewTabs ?? []).map(migrateViewTab);
     return {
       ...initialState,
       slaves,
@@ -229,10 +256,12 @@ export function appReducer(state: AppState, action: Action): AppState {
       return { ...state, activeSlaveId: action.payload };
     }
     case 'ADD_VIEW_TAB': {
+      // 新建标签即绑定其从站：同步选中该从站，与 master 的 ADD_TAB 行为一致
       return {
         ...state,
         viewTabs: [...state.viewTabs, action.payload],
         activeViewTabId: action.payload.id,
+        activeSlaveId: action.payload.slaveId,
       };
     }
     case 'UPDATE_VIEW_TAB': {

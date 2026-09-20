@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Upload, Radio, X } from 'lucide-react';
+import { Plus, Upload, Radio, X } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppState } from '@/hooks/use-app-state';
 import { useModbusWs } from '@/hooks/use-modbus-ws';
@@ -162,14 +162,13 @@ export function RegisterViewer() {
   // ⚠️ 按窗口分桶，而不是一张全局表：草稿不带区域，混在一起会把上一个区的待写入值
   // 显示、甚至提交到别的区（见 ROADMAP §3.2「R1 后续修复：跨区串值」）。
   const [writeDrafts, setWriteDrafts] = useState<Record<string, Map<number, number>>>({});
-  const [refreshing, setRefreshing] = useState(false);
 
   /** 当前窗口的草稿桶（渲染用；提交时按各自标签的窗口键取，不依赖"当前选中"） */
   //
   // ⚠️ `registerWindowKey()` **必须包在 useMemo 里，不要在渲染期直接调用**。
   // 实测：渲染期调用一个编译器无法证明纯度的模块级函数，会让 React Compiler **跳过整个组件**
   // 的编译，报 `react-hooks/preserve-manual-memoization` —— 而且报错会落在 `startRename` /
-  // `commitCellEdit` / `handleRead` 等**与本次改动完全无关**的回调上（提示"推断依赖是 setEditingTabId"），
+  // `commitCellEdit` / `updateTab` 等**与本次改动完全无关**的回调上（提示"推断依赖是 setEditingTabId"），
   // 极难定位。包进 useMemo 即恢复通过，同时保证"窗口身份"的格式只在 `registerWindowKey` 一处定义，
   // 不会出现两处格式串漂移。
   const writeDraft: Map<number, number> = useMemo(
@@ -206,14 +205,6 @@ export function RegisterViewer() {
       setEditingNoteCell(null);
     },
     [activeTab, dispatch],
-  );
-
-  /** 读取标签窗口（⭐ 寄存器单位，Q19 / Q20） */
-  const doRead = useCallback(
-    (tab: RegisterViewTab) => {
-      readRegisters(tab.id, tab.slaveId, tab.area, tab.startAddress, tab.registerCount);
-    },
-    [readRegisters],
   );
 
   /** 更新标签配置 */
@@ -384,14 +375,6 @@ export function RegisterViewer() {
     },
     [isRunning, registerData, writeDrafts, windowMatches, writeRegister, writeRegisters],
   );
-
-  /** 手动读取（带短暂 loading 态） */
-  const handleRead = useCallback(() => {
-    if (!activeTab || !isRunning) return;
-    setRefreshing(true);
-    doRead(activeTab);
-    setTimeout(() => setRefreshing(false), 300);
-  }, [activeTab, isRunning, doRead]);
 
   // 切换标签 / 修改窗口配置 / 从站启动 → 自动重读。
   // 依赖按原始值拆开，避免因标签对象本身变化（如重命名）而触发多余读取。
@@ -714,17 +697,9 @@ export function RegisterViewer() {
           </label>
 
           {/* 操作按钮 */}
+          {/* ⭐ 这里**只有「注入」**。从站侧没有"读取"这个动作：值由服务端主动推给
+              所有客户端（`register_update` 广播 + 前端自动打补丁），手动「读取」按钮纯属多余，已删除。 */}
           <div className="ml-auto flex items-center gap-1.5">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!isRunning || windowOutOfRange}
-              onClick={handleRead}
-              className="h-7 border-primary/30 bg-primary/10 px-2.5 text-xs text-primary hover:bg-primary/20 hover:text-primary"
-            >
-              <RefreshCw className={`mr-1 h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
-              {t('read')}
-            </Button>
             {/* ⭐ R1：不再按区域门控 —— 四个区都可手动注入 */}
             <Button
               variant="outline"
@@ -738,7 +713,7 @@ export function RegisterViewer() {
               }`}
             >
               <Upload className="mr-1 h-3 w-3" />
-              {t('write')}
+              {t('inject')}
             </Button>
             {!isRunning && (
               <Badge variant="outline" className="border-border/40 px-2 py-0.5 text-[10px]">

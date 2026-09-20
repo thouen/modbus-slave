@@ -96,12 +96,13 @@ export const translations = {
     formatDouble: 'Double (64-bit)',
 
     // Tab actions
-    read: 'Read',
     addTab: 'Add tab',
     renameTab: 'Rename Tab',
     empty: 'No tabs available',
     noSlaveSelected: 'Select a slave to view register data',
-    noDataHint: 'Click Read to load data',
+    // ⭐ 从站没有「读取」按钮：值由服务端主动推给所有客户端（register_update 广播），
+    // 所以这里不再提示"点读取"，而是"等数据"。
+    noDataHint: 'Waiting for register data…',
     slaveStoppedHint: 'Start the slave to view register data',
     selectTabHint: 'Select a tab to view data',
     createTabHint: 'Create a tab to start',
@@ -112,8 +113,9 @@ export const translations = {
     dataType: 'Type',
     readOnly: 'Read Only',
     writable: 'Writable',
-    writeValue: 'Write Value',
-    write: 'Write',
+    // ⭐ 从站侧不叫「写入」：写是**主站**的动词，这里是把值**注入**设备内存（`injectRegister`）。
+    // 与主站 i18n 的同名 key `write`（「写入」）是**有意区别**，见 TERMINOLOGY.md 术语对账。
+    inject: 'Inject',
     cancel: 'Cancel',
     newTab: 'New Tab',
     tabName: 'Tab Name',
@@ -253,12 +255,13 @@ export const translations = {
     formatDouble: '双精度 (64位)',
 
     // 标签操作
-    read: '读取',
     addTab: '添加标签',
     renameTab: '重命名标签',
     empty: '暂无标签',
     noSlaveSelected: '请选择一个从站以查看寄存器数据',
-    noDataHint: '点击「读取」加载数据',
+    // ⭐ 从站没有「读取」按钮：值由服务端主动推给所有客户端（register_update 广播），
+    // 所以这里不再提示"点读取"，而是"等数据"。
+    noDataHint: '等待从站推送寄存器数据…',
     slaveStoppedHint: '启动从站后才能查看寄存器数据',
     selectTabHint: '请选择一个标签查看数据',
     createTabHint: '新建标签以开始',
@@ -269,8 +272,9 @@ export const translations = {
     dataType: '类型',
     readOnly: '只读',
     writable: '可写',
-    writeValue: '写入值',
-    write: '写入',
+    // ⭐ 从站侧不叫「写入」：写是**主站**的动词，这里是把值**注入**设备内存（`injectRegister`）。
+    // 与主站 i18n 的同名 key `write`（「写入」）是**有意区别**，见 TERMINOLOGY.md 术语对账。
+    inject: '注入',
     cancel: '取消',
     newTab: '新建标签',
     tabName: '标签名称',

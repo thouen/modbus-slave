@@ -466,10 +466,12 @@ export function RegisterViewer() {
     <div className="flex h-full min-w-0 flex-col">
       {/* 标签栏 */}
       {/* ⭐ 固定高度 h-10（40px），与「从站管理」标题栏同高 —— 四个标题/标签栏一律 40px。
-          不靠内容撑高：标签自身字号/内边距一变，高度就会跟着漂。 */}
-      <div className="flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-surface px-1.5">
+          不靠内容撑高：标签自身字号/内边距一变，高度就会跟着漂。
+          ⭐ 显示风格对齐 master 的标签栏：rounded-t-md / px-3 / text-xs，
+          active 用「底部 2px 主色下划线」而非文件夹式边框。 */}
+      <div className="flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border/30 bg-surface px-1.5">
         {viewTabs.length === 0 && (
-          <span className="px-2 py-1 text-[10px] text-muted-foreground">{t('empty')}</span>
+          <span className="px-2 py-1 text-xs text-muted-foreground">{t('empty')}</span>
         )}
         {viewTabs.map((tab) => {
           const isActive = tab.id === activeTab?.id;
@@ -478,10 +480,10 @@ export function RegisterViewer() {
           return (
             <div
               key={tab.id}
-              className={`group flex h-full shrink-0 cursor-pointer items-center gap-1 rounded-t px-2 text-[10px] transition-colors ${
+              className={`group relative flex h-full shrink-0 cursor-pointer items-center gap-1 rounded-t-md px-3 text-xs transition-colors ${
                 isActive
-                  ? 'border border-b-transparent border-border bg-card text-foreground -mb-px'
-                  : 'text-muted-foreground hover:bg-card/50 hover:text-foreground'
+                  ? 'border-b-2 border-primary bg-surface-container text-foreground'
+                  : 'border-b-2 border-transparent text-muted-foreground hover:bg-surface-container/60 hover:text-foreground'
               }`}
               onClick={() => !isEditing && selectTab(tab)}
               onDoubleClick={() => startRename(tab)}
@@ -498,11 +500,11 @@ export function RegisterViewer() {
                     if (e.key === 'Escape') setEditingTabId(null);
                   }}
                   onClick={(e) => e.stopPropagation()}
-                  className="w-20 rounded border border-primary/40 bg-background px-1 py-0.5 text-[10px] text-foreground outline-none"
+                  className="w-20 rounded border border-primary/40 bg-background px-1 py-0.5 text-xs text-foreground outline-none"
                 />
               ) : (
                 <>
-                  <span className="max-w-32 truncate">{tab.name || '—'}</span>
+                  <span className="max-w-32 truncate font-medium">{tab.name || '—'}</span>
                   <span
                     className={`max-w-24 truncate rounded px-1 py-0.5 text-[9px] leading-none ${
                       isActive ? 'bg-primary/15 text-primary' : 'bg-foreground/5 text-muted-foreground'

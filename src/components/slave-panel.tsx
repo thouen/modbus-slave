@@ -216,12 +216,15 @@ export function SlavePanel() {
         </div>
       </div>
 
-      {/* Slave list */}
+      {/* Slave list —— ⭐ 显示风格对齐 master 的 ConnectionList：
+          「状态点 + 名称 + 徽章」一行 → 「目标 · ID」一行 → 「元信息 + 悬停操作」一行，
+          后两行用 pl-4 缩进到名称列（状态点 w-2 + gap-2 = 16px = pl-4）。 */}
       <ScrollArea className="flex-1">
-        <div className="p-2 space-y-1.5">
+        <div className="p-2 space-y-2">
           {state.slaves.length === 0 && (
-            <div className="text-center py-8 text-xs text-muted-foreground">
-              {t('newSlave')}
+            <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground/50">
+              <Radio className="w-6 h-6" />
+              <p className="text-[11px]">{t('newSlave')}</p>
             </div>
           )}
           {state.slaves.map((slave) => {
@@ -238,64 +241,60 @@ export function SlavePanel() {
             return (
               <div
                 key={slave.id}
-                className={`group relative rounded-md border p-2.5 cursor-pointer transition-colors ${
+                className={`group rounded-md border p-2 cursor-pointer transition-all ${
                   isActive
-                    ? 'border-primary/50 bg-primary/5'
-                    : 'border-border bg-card hover:border-border/80 hover:bg-card/80'
+                    ? 'border-primary/60 bg-primary/[0.06] ring-1 ring-primary/30'
+                    : 'border-border/60 bg-card hover:border-border hover:bg-card/80'
                 }`}
                 onClick={() => dispatch({ type: 'SET_ACTIVE_SLAVE', payload: slave.id })}
               >
-                <div className="flex items-start gap-2">
-                  {/* Status LED */}
-                  <div className={`mt-1 w-2 h-2 rounded-full shrink-0 ${statusColor(status)}`} />
+                {/* 第 1 行：状态点 + 名称 + 徽章 */}
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${statusColor(status)}`} />
+                  <span className="flex-1 truncate text-xs font-medium text-foreground/90">{slave.name}</span>
+                  {needsRestart && (
+                    <span
+                      className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-400"
+                      title={t('restartRequired')}
+                    >
+                      {t('restart')}
+                    </span>
+                  )}
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold ${badge.cls}`}>
+                    {badge.label}
+                  </span>
+                </div>
 
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-foreground truncate">{slave.name}</span>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {needsRestart && (
-                          <span
-                            className="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-amber-500/15 text-amber-400"
-                            title={t('restartRequired')}
-                          >
-                            {t('restart')}
-                          </span>
-                        )}
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-sm font-medium ${badge.cls}`}>
-                          {badge.label}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
-                      <span className="truncate">{slaveTarget(slave)}</span>
-                      <span>·</span>
-                      <span>ID: {slave.slaveId}</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
-                      <Gauge className="w-2.5 h-2.5" />
-                      <span>{slave.holdingRegisterCount} regs</span>
-                    </div>
-                  </div>
+                {/* 第 2 行：目标地址 · 单元号 */}
+                <div className="mt-1.5 flex items-center gap-2 pl-4 text-[10px] text-muted-foreground">
+                  <span className="truncate font-mono text-muted-foreground/80">{slaveTarget(slave)}</span>
+                  <span>·</span>
+                  <span>ID: {slave.slaveId}</span>
+                </div>
 
-                  {/* Hover actions */}
+                {/* 第 3 行：元信息（左） + 悬停操作（右） */}
+                <div className="mt-1.5 flex items-center justify-between pl-4">
+                  <span className="flex items-center gap-1 text-[9px] text-muted-foreground/60">
+                    <Gauge className="w-2.5 h-2.5" />
+                    {slave.holdingRegisterCount} regs
+                  </span>
                   <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button
-                      size="icon"
+                      size="sm"
                       variant="ghost"
-                      className="h-6 w-6"
+                      className={`h-5 px-1.5 text-[9px] ${status === 'running' ? 'text-red-400' : 'text-green-400'}`}
                       onClick={(e) => { e.stopPropagation(); handleToggle(slave); }}
                       title={status === 'running' ? t('stop') : t('start')}
                     >
                       {status === 'running'
-                        ? <Square className="w-3 h-3" />
-                        : <Play className="w-3 h-3" />}
+                        ? <Square className="w-3 h-3 mr-0.5" />
+                        : <Play className="w-3 h-3 mr-0.5" />}
                     </Button>
                     {needsRestart && (
                       <Button
-                        size="icon"
+                        size="sm"
                         variant="ghost"
-                        className="h-6 w-6 text-amber-400 hover:text-amber-300"
+                        className="h-5 px-1.5 text-[9px] text-amber-400"
                         onClick={(e) => { e.stopPropagation(); restartSlave(slave.id, slave); }}
                         title={t('restartSlave')}
                       >
@@ -303,18 +302,18 @@ export function SlavePanel() {
                       </Button>
                     )}
                     <Button
-                      size="icon"
+                      size="sm"
                       variant="ghost"
-                      className="h-6 w-6"
+                      className="h-5 px-1.5 text-[9px] text-blue-400"
                       onClick={(e) => { e.stopPropagation(); handleEdit(slave); }}
                       title={t('editSlave')}
                     >
                       <Pencil className="w-3 h-3" />
                     </Button>
                     <Button
-                      size="icon"
+                      size="sm"
                       variant="ghost"
-                      className="h-6 w-6 text-destructive hover:text-destructive"
+                      className="h-5 px-1.5 text-[9px] text-red-400"
                       onClick={(e) => { e.stopPropagation(); setDeleteTarget(slave); }}
                       title={t('deleteSlave')}
                     >

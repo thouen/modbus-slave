@@ -74,11 +74,6 @@ const FORMAT_KEY_MAP: Record<DataDisplayFormat, TranslationKey> = {
   double: 'formatDouble',
 };
 
-/** 32 位字节序 */
-const BYTE_ORDER_32: ByteOrder32[] = ['ABCD', 'BADC', 'CDAB', 'DCBA'];
-/** 64 位字节序 */
-const BYTE_ORDER_64: ByteOrder64[] = ['ABCDEFGH', 'HGFEDCBA', 'BADCFEHG', 'GHEFCDAB'];
-
 /** 按区域校验默认格式是否可用（位区域只能用 bits） */
 function defaultFormatForArea(area: RegisterArea, current: DataDisplayFormat): DataDisplayFormat {
   if (isBitArea(area)) return 'bits';
@@ -140,6 +135,14 @@ export function RegisterViewer() {
   const activeTab = viewTabs.find((tab) => tab.id === activeViewTabId) ?? null;
   const boundSlave = activeTab ? slaves.find((s) => s.id === activeTab.slaveId) : undefined;
   const isRunning = activeTab ? slaveStatus[activeTab.slaveId] === 'running' : false;
+
+  /**
+   * ⭐ 当前生效的 32/64 位字节序。
+   * 字节序是**设备属性** ⇒ 归**从站**；标签只是视图，所以这里一律**读从站的值**，
+   * 标签侧只做只读显示、不持有（见 `RegisterViewTab` 的注释）。
+   */
+  const byteOrder32: ByteOrder32 = boundSlave?.byteOrder32 ?? 'ABCD';
+  const byteOrder64: ByteOrder64 = boundSlave?.byteOrder64 ?? 'ABCDEFGH';
 
   // 标签重命名编辑态
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
@@ -211,8 +214,6 @@ export function RegisterViewer() {
       startAddress,
       registerCount: 20,
       displayFormat: 'hex',
-      byteOrder32: slave.byteOrder32,
-      byteOrder64: slave.byteOrder64,
     };
     dispatch({ type: 'ADD_VIEW_TAB', payload: tab });
     // 新标签尚未进入 state，直接用其配置发起一次读取
@@ -252,11 +253,14 @@ export function RegisterViewer() {
     (tab: RegisterViewTab, registerIndex: number, raw: string, format: DataDisplayFormat, span: number) => {
       if (span > 1) {
         // 宽类型（32/64 位）：解析为格式化值后拆分回 span 个 16 位原始值（仅字区）
+        // ⭐ 字节序按**标签所绑定的从站**取（不是"当前选中的从站"）—— 与其它读写路径同一口径：
+        // 字节序是设备属性，谁的值就按谁的设备解释。
+        const bound = slaves.find((s) => s.id === tab.slaveId);
         const regs = encodeValueToRegisters(
           parseDisplayValue(raw, format),
           format,
-          tab.byteOrder32,
-          tab.byteOrder64,
+          bound?.byteOrder32 ?? 'ABCD',
+          bound?.byteOrder64 ?? 'ABCDEFGH',
         );
         if (regs.length !== span) {
           setEditingCell(null);
@@ -279,7 +283,7 @@ export function RegisterViewer() {
       }
       setEditingCell(null);
     },
-    [],
+    [slaves],
   );
 
   /**
@@ -619,50 +623,34 @@ export function RegisterViewer() {
             </Select>
           </label>
 
-          {/* 32 位字节序 */}
+          {/* 32 位字节序 —— ⭐ **只读**：字节序是所绑定**从站**的设备属性，标签只是视图 */}
           {(activeTab.displayFormat === 'long' ||
             activeTab.displayFormat === 'ulong' ||
             activeTab.displayFormat === 'float') && (
-            <label className="hidden items-center gap-1.5 text-[11px] text-muted-foreground lg:flex">
+            <span
+              className="hidden items-center gap-1.5 text-[11px] text-muted-foreground lg:flex"
+              title={t('byteOrderFollowsHint')}
+            >
               {t('byteOrder32')}
-              <Select
-                value={activeTab.byteOrder32}
-                onValueChange={(v) => updateTab(activeTab.id, { byteOrder32: v as ByteOrder32 })}
-              >
-                <SelectTrigger className="h-6 w-20 border-border/40 bg-background px-2 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {BYTE_ORDER_32.map((order) => (
-                    <SelectItem key={order} value={order} className="text-xs">
-                      {order}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
+              <span className="rounded border border-border/40 bg-foreground/5 px-2 py-0.5 font-mono text-xs text-foreground/70">
+                {byteOrder32}
+              </span>
+              <span className="text-[10px] text-muted-foreground/60">{t('byteOrderFollows')}</span>
+            </span>
           )}
 
-          {/* 64 位字节序 */}
+          {/* 64 位字节序 —— ⭐ 同上，只读 */}
           {activeTab.displayFormat === 'double' && (
-            <label className="hidden items-center gap-1.5 text-[11px] text-muted-foreground lg:flex">
+            <span
+              className="hidden items-center gap-1.5 text-[11px] text-muted-foreground lg:flex"
+              title={t('byteOrderFollowsHint')}
+            >
               {t('byteOrder64')}
-              <Select
-                value={activeTab.byteOrder64}
-                onValueChange={(v) => updateTab(activeTab.id, { byteOrder64: v as ByteOrder64 })}
-              >
-                <SelectTrigger className="h-6 w-24 border-border/40 bg-background px-2 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {BYTE_ORDER_64.map((order) => (
-                    <SelectItem key={order} value={order} className="text-xs">
-                      {order}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
+              <span className="rounded border border-border/40 bg-foreground/5 px-2 py-0.5 font-mono text-xs text-foreground/70">
+                {byteOrder64}
+              </span>
+              <span className="text-[10px] text-muted-foreground/60">{t('byteOrderFollows')}</span>
+            </span>
           )}
 
           {/* 值来源筛选（Q7）：dim 非匹配行 —— 不改变行结构（行恒等于窗口内的寄存器） */}
@@ -726,6 +714,8 @@ export function RegisterViewer() {
         <DataTable
           tab={activeTab}
           data={registerData[activeTab.id] ?? []}
+          byteOrder32={byteOrder32}
+          byteOrder64={byteOrder64}
           writeDraft={writeDraft}
           onUpdate={updateTab}
           editingCell={editingCell}
@@ -801,6 +791,8 @@ function LedBits({
 function DataTable({
   tab,
   data,
+  byteOrder32,
+  byteOrder64,
   writeDraft,
   onUpdate,
   editingCell,
@@ -815,6 +807,10 @@ function DataTable({
 }: {
   tab: RegisterViewTab;
   data: RegisterData[];
+  /** ⭐ 32 位字节序 —— 来自**该标签所绑定的从站**（设备属性），标签自己不持有 */
+  byteOrder32: ByteOrder32;
+  /** ⭐ 64 位字节序 —— 同上 */
+  byteOrder64: ByteOrder64;
   /** ⚠️ key = **寄存器序号**（Q20） */
   writeDraft: Map<number, number>;
   onUpdate: (tabId: string, updates: Partial<RegisterViewTab>) => void;
@@ -900,7 +896,7 @@ function DataTable({
               const dimmed = !matchesSourceFilter(item);
               const displayValue =
                 isGroupStart && groupFits
-                  ? formatRegisterValue(rows, index, format, tab.byteOrder32, tab.byteOrder64)
+                  ? formatRegisterValue(rows, index, format, byteOrder32, byteOrder64)
                   : '—';
               // 宽类型整组草稿展示：整组地址均已编辑时按草稿重算格式化值
               let groupDisplay = displayValue;
@@ -912,7 +908,7 @@ function DataTable({
                     address: a,
                     rawValue: drafted[k] as number,
                   }));
-                  groupDisplay = formatRegisterValue(eff, 0, format, tab.byteOrder32, tab.byteOrder64);
+                  groupDisplay = formatRegisterValue(eff, 0, format, byteOrder32, byteOrder64);
                 }
               }
               const formatDisabled = !isGroupStart || !wordArea;
@@ -1047,7 +1043,7 @@ function DataTable({
                           if (!canEdit) return;
                           setEditingCell(cellKey);
                           setCellValue(
-                            formatRegisterValue(rows, index, format, tab.byteOrder32, tab.byteOrder64),
+                            formatRegisterValue(rows, index, format, byteOrder32, byteOrder64),
                           );
                         }}
                       >

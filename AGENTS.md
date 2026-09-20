@@ -35,13 +35,14 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 - `utils.ts` — `cn` class merging utility
 
 ### Hooks (src/hooks/)
-- `use-app-state.tsx` — Global app state (React Context + useReducer)；`migrateViewTab()` 负责旧持久化标签的字段迁移（formatOverrides / 字节序 / 数量），已废弃的字段（如 `writeMode`）会被自然丢弃
+- `use-app-state.tsx` — Global app state (React Context + useReducer)；`migrateViewTab()` 负责旧持久化标签的字段迁移（formatOverrides / 数量），已废弃的字段（如 `writeMode`、**已改归从站的 `byteOrder32/64`**）会被自然丢弃
 - `use-i18n.tsx` — i18n provider + hook
 - `use-modbus-ws.ts` — WebSocket connection + action dispatchers
 
 ### Components (src/components/)
 - `slave-panel.tsx` — Left panel: slave list + config + start/stop controls
-- `register-viewer.tsx` — 寄存器视图：标签栏（**绑定从站实例**，跨从站显示全部标签 + 从站名徽标，双击重命名）+ 内联配置条（区域 / 起始地址 / 数量 / 默认格式 / 字节序）+ 数据表（逐行类型 + 行内编辑草稿写入）
+- `register-viewer.tsx` — 寄存器视图：标签栏（**绑定从站实例**，跨从站显示全部标签 + 从站名徽标，双击重命名）+ 内联配置条（区域 / 起始地址 / 数量 / 默认格式 + **只读**字节序[跟随从站]）+ 数据表（逐行类型 + 行内编辑草稿写入）
+- ⚠️ **字节序不属于标签**（2026-09-20 改绑）：唯一数据源是 `SlaveConfig`，在**从站配置对话框**里改；标签侧只读显示
 - `log-viewer.tsx` — Real-time request log viewer
 - `ui/` — shadcn/ui base components
 

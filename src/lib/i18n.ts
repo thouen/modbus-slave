@@ -50,6 +50,11 @@ export const translations = {
     byteOrder: 'Byte Order',
     byteOrder32: '32-bit Byte Order',
     byteOrder64: '64-bit Byte Order',
+    byteOrderFollows: 'Follows slave',
+    byteOrderFollowsHint:
+      'Byte order is a property of the bound slave. Edit it in the slave configuration.',
+    byteOrderScopeHint:
+      '32/64-bit types only · 16-bit registers are fixed big-endian (ModBus spec)',
 
     // Register viewer
     registerArea: 'Register Area',
@@ -200,6 +205,9 @@ export const translations = {
     byteOrder: '字节序',
     byteOrder32: '32位字节序',
     byteOrder64: '64位字节序',
+    byteOrderFollows: '跟随从站',
+    byteOrderFollowsHint: '字节序是所绑定从站的属性，请在从站配置中修改。',
+    byteOrderScopeHint: '仅作用于 32/64 位类型 · 16 位寄存器固定为大端（ModBus 规范）',
 
     // Register viewer
     registerArea: '寄存器区域',

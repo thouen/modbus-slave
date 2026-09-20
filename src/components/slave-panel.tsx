@@ -628,6 +628,10 @@ export function SlavePanel() {
                     </Select>
                   </div>
                 </div>
+                {/* 作用范围：16 位固定大端，不受这两种字节序影响（ModBus 规范） */}
+                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/70">
+                  {t('byteOrderScopeHint')}
+                </p>
               </div>
             </div>
 

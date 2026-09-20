@@ -82,9 +82,13 @@ const initialState: AppState = {
 };
 
 /**
- * 兼容旧版持久化视图标签：补齐新增字段（formatOverrides / 字节序 / 数量）。
+ * 兼容旧版持久化视图标签：补齐新增字段（formatOverrides / 数量）。
  *
  * 返回值是显式构造的完整对象，因此旧数据里已经废弃的字段（如 `writeMode`）会被自然丢弃。
+ *
+ * ⚠️ 旧版本标签上还带 `byteOrder32` / `byteOrder64`。字节序已改归**从站**（见 `SlaveConfig`），
+ * 这两个字段随本函数**显式构造返回值而自然丢弃** —— 与 `writeMode` 同一先例。
+ * **绝不要把它们上推回从站**：那会用旧标签里的值覆盖从站上的新值。
  *
  * ⚠️ **单位变更（Q19）**：数量字段由 `quantity` 改名 `registerCount`，单位也从
  * "地址个数"改为"**寄存器个数**"。旧值直接沿用 —— 字区两者等价；位区旧值按位数计，
@@ -111,8 +115,6 @@ export function migrateViewTab(
       (legacyFormat === 'led' ? 'bits' : tab.displayFormat) ?? (isBitArea(area) ? 'bits' : 'hex'),
     formatOverrides:
       overrides && Object.keys(overrides).length > 0 ? overrides : undefined,
-    byteOrder32: tab.byteOrder32 ?? 'ABCD',
-    byteOrder64: tab.byteOrder64 ?? 'ABCDEFGH',
   };
 }
 

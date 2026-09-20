@@ -207,9 +207,17 @@ export interface SlaveConfig {
   holdingRegisterCount: number;
   /** 输入寄存器区总寄存器数量（FC04）⇒ 有效地址范围 `[0, inputRegisterCount − 1]` */
   inputRegisterCount: number;
-  /** Per-slave default byte order for 32-bit values */
+  /**
+   * ⭐ 32 位值（long / ulong / float）的字节序 —— **从站级设备属性**，唯一数据源。
+   * 引用该从站的**所有标签**共用这一份值（标签侧只读显示，见 `RegisterViewTab`）。
+   * ⚠️ 协议层**不用**它：从站只存 16 位寄存器，字节序纯粹是"看图 / 录入"的约定。
+   */
   byteOrder32: ByteOrder32;
-  /** Per-slave default byte order for 64-bit values */
+  /**
+   * ⭐ 64 位值（double）的字节序 —— **从站级设备属性**，唯一数据源。
+   * 作用范围：`long` / `ulong` / `float` 读 `byteOrder32`，`double` 读 `byteOrder64`；
+   * **16 位五个格式（bits / short / ushort / hex / binary）两个都不读，固定大端**。
+   */
   byteOrder64: ByteOrder64;
 }
 
@@ -420,6 +428,9 @@ export interface RegisterViewTab {
   /** 逐行类型映射：分组起始地址 -> 该行的显示格式（覆盖标签默认 displayFormat）。
    *  仅记录分组起始地址；32/64 位类型占用的后续地址不在此表中。 */
   formatOverrides?: Record<number, DataDisplayFormat>;
-  byteOrder32: ByteOrder32;
-  byteOrder64: ByteOrder64;
+  // ⭐ 字节序**不在标签上** —— 它是**设备属性**，归 `SlaveConfig`（见 R3：
+  //    "值归从站实例，标签只是视图"；字节序决定同一份字节怎么解释，必须与值同归一处）。
+  //    标签侧只**只读显示**当前生效值，不持有、不可改。
+  // ⚠️ 16 位寄存器（bits/short/ushort/hex/binary）**固定大端**（ModBus 规范），
+  //    与这两种字节序无关。
 }

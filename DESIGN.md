@@ -198,6 +198,16 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 - **32-bit**: ABCD (Big-Endian), DCBA (Little-Endian), BADC (Mid-Big), CDAB (Mid-Little)
 - **64-bit**: ABCDEFGH, HGFEDCBA, BADCFEHG, GHEFCDAB
 
+⭐ **归属（2026-09-20 改绑）**：字节序是**从站级设备属性**，唯一数据源 = [`SlaveConfig`](src/lib/modbus-types.ts:1) 上的
+`byteOrder32` / `byteOrder64`，在**从站配置对话框**里修改。`RegisterViewTab` **不再持有**这两个字段，
+配置条只做**只读显示 + 「跟随从站」提示**（单一数据源，同时看得出当前生效值）。
+
+⚠️ **作用范围只到跨寄存器类型**：`byteOrder32` 只被 `long` / `ulong` / `float` 读，`byteOrder64` 只被 `double` 读；
+**16 位五个格式（`bits` / `short` / `ushort` / `hex` / `binary`）两个都不读 —— 固定大端（ModBus 规范）**。
+
+⚠️ **协议层完全不参与**：`modbus-slave-server.ts` 从不读字节序 ⇒ 它只是"看图 / 录入"的约定，**不上线**。
+推论：**改从站的字节序不会改变主站读到的字节。**
+
 ## Register Viewer / 寄存器视图
 
 交互语义与 modbus-master 对齐（同样的标签栏 + 内联配置条 + 逐行类型 + 行内编辑写入）。
@@ -215,7 +225,7 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 | 能力 | 实现 |
 |---|---|
 | 标签绑定 | `RegisterViewTab.slaveId` 绑定**从站实例**（内部 id）；标签栏显示全部标签（跨从站）并带从站名徽标；点击标签同时切换活动从站；无任何从站时禁止新建 |
-| 配置条 | 区域 / 起始地址 / 寄存器数量 / 默认格式 / 字节序（按默认格式条件显示）+ 值来源筛选，全部**内联可编辑**；数量上限**四个区统一 125**（`MAX_READ_REGISTERS_PER_FRAME`，位区 2000 位 ÷ 16） |
+| 配置条 | 区域 / 起始地址 / 寄存器数量 / 默认格式 —— 全部**内联可编辑**；**字节序为只读**（跟随从站，按默认格式条件显示，附「跟随从站」提示与作用范围说明）；另有值来源筛选。数量上限**四个区统一 125**（`MAX_READ_REGISTERS_PER_FRAME`，位区 2000 位 ÷ 16） |
 | 只读提示 | 输入框旁显示换算结果：起始地址旁 `起始位 = startAddress × 16`，数量旁 `位 A ~ B`（**四个区同一套措辞**）—— 让单位统一后的 ×16 **不静默** |
 | 读取窗口 | `startAddress` + `registerCount`（**均为寄存器单位**）是标签的连续窗口，同时也是表格渲染行数；`register_update` 增量只补窗口内已缓存的行 |
 | ⚠️ 窗口身份 | **区域 + 起始地址 + 数量**。三者任一变化 ⇒ `UPDATE_VIEW_TAB` 立即丢弃该标签的缓存，且新数据到达前**禁用提交**。否则切区后会把上一个区域的值当成当前区域显示，更糟的是「未编辑行回填」会把旧区的值**真写进新区** |
@@ -232,7 +242,7 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 | ⚠️ 提交前守卫 | 「整段提交」在**缓存未覆盖当前窗口**时直接拒绝（`windowMatches()`）：行数不符 或 逐行地址对不上就返回，不做任何写入。这是"回填"这一步的安全前提 —— 回填依赖缓存里的原值，缓存属于别的窗口时回填就是**写错地方** |
 | 失败可见性 | 越界写入由服务端回 `success:false` + 原因，前端写入按从站筛选的错误日志；窗口越界 / 超单帧写上限（>123）则**就地提示并禁用提交** |
 
-> 迁移：旧持久化标签缺少 `formatOverrides` / 字节序 / 数量时由 [`migrateViewTab()`](src/hooks/use-app-state.tsx:80) 补齐，位区域默认格式为 `bits`（旧值 `led` 会被改写为 `bits`）；`migrateViewTab()` 显式构造返回值，因此旧数据里已废弃的 `writeMode` 字段会被自然丢弃。
+> 迁移：旧持久化标签缺少 `formatOverrides` / 数量时由 [`migrateViewTab()`](src/hooks/use-app-state.tsx:80) 补齐，位区域默认格式为 `bits`（旧值 `led` 会被改写为 `bits`）；`migrateViewTab()` 显式构造返回值，因此旧数据里已废弃的字段会被自然丢弃 —— 包括 `writeMode`，以及**已改归从站的 `byteOrder32` / `byteOrder64`**（⚠️ 丢弃即可，**不要**反推回从站：那会用旧标签的值覆盖设备上的新值）。
 
 ## State Management / 状态管理
 

@@ -269,6 +269,8 @@ describe('校验与工具函数', () => {
 });
 
 describe('registerWindowKey（窗口身份）', () => {
+  // ⚠️ 这里不再有字节序字段：字节序已改归**从站**（`SlaveConfig`），标签上根本没有它 ⇒
+  // "改字节序不会换窗口键"这个不变量已由**类型系统**保证，无需再写用例。
   const tab = {
     id: 't1',
     name: 't1',
@@ -277,8 +279,6 @@ describe('registerWindowKey（窗口身份）', () => {
     startAddress: 0,
     registerCount: 20,
     displayFormat: 'bits',
-    byteOrder32: 'ABCD',
-    byteOrder64: 'ABCDEFGH',
   } as const;
 
   it('同一个窗口恒定得到同一个键（切走再切回来能找到自己的草稿）', () => {

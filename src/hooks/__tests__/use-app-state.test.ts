@@ -32,8 +32,6 @@ function makeTab(id: string, slaveId: string, overrides: Partial<RegisterViewTab
     startAddress: 0,
     registerCount: 10,
     displayFormat: 'hex',
-    byteOrder32: 'ABCD',
-    byteOrder64: 'ABCDEFGH',
     ...overrides,
   };
 }
@@ -306,14 +304,26 @@ describe('运行配置与删除', () => {
 // ── 视图标签迁移与绑定 ───────────────────────────────────────────
 
 describe('视图标签迁移与绑定', () => {
-  it('migrateViewTab 为旧数据补齐 formatOverrides / 字节序 / 数量', () => {
+  it('migrateViewTab 为旧数据补齐 formatOverrides / 数量', () => {
     const migrated = migrateViewTab({ id: 't1', slaveId: 's1' });
     assert.equal(migrated.id, 't1');
     assert.equal(migrated.area, 'holdingRegisters');
     assert.equal(migrated.formatOverrides, undefined);
     assert.equal(migrated.registerCount, 20);
-    assert.equal(migrated.byteOrder32, 'ABCD');
-    assert.equal(migrated.byteOrder64, 'ABCDEFGH');
+  });
+
+  it('migrateViewTab 丢弃旧标签上的字节序字段（字节序已改归从站）', () => {
+    // 旧版本标签自带 byteOrder32/64。改绑到从站后必须**丢弃** ——
+    // 且绝不能把它们上推回从站（那会用旧标签的值覆盖从站上的新值）。
+    const legacy = {
+      id: 't9',
+      slaveId: 's1',
+      byteOrder32: 'DCBA',
+      byteOrder64: 'HGFEDCBA',
+    } as unknown as Partial<RegisterViewTab> & { quantity?: number };
+    const migrated = migrateViewTab(legacy);
+    assert.equal('byteOrder32' in migrated, false);
+    assert.equal('byteOrder64' in migrated, false);
   });
 
   it('migrateViewTab 把旧 quantity 迁到 registerCount，并夹进 [1, 125]（Q19 单位变更）', () => {

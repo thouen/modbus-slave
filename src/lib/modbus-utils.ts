@@ -175,7 +175,7 @@ export function doubleToBytes(value: number): number[] {
 /**
  * Format a register value according to display format.
  *
- * 语义与 modbus-master 保持一致：`hex` 不带 0x 前缀、`led` 输出 16 位串、
+ * 语义与 modbus-master 保持一致：`hex` 不带 0x 前缀、`bits` 输出 16 位串、
  * `float` 保留 6 位小数、`double` 保留 10 位小数；宽类型需要后续寄存器存在，否则返回 `-`。
  */
 export function formatRegisterValue(
@@ -190,7 +190,7 @@ export function formatRegisterValue(
   const reg = registers[startIndex];
 
   switch (format) {
-    case 'led': {
+    case 'bits': {
       const bits: string[] = [];
       for (let i = 15; i >= 0; i--) {
         bits.push((reg.rawValue >> i) & 1 ? '1' : '0');
@@ -290,11 +290,11 @@ export function encodeValueToRegisters(
 
 /**
  * Get bits per value for a given display format
- * led: 1 bit, 16-bit formats: 16 bits, 32-bit formats: 32 bits, 64-bit: 64 bits
+ * bits: 恒占 1 个寄存器（位视图），16-bit formats: 16 bits, 32-bit formats: 32 bits, 64-bit: 64 bits
  */
 export function getBitsPerValue(format: DataDisplayFormat): number {
   switch (format) {
-    case 'led':
+    case 'bits':
       return 1;
     case 'binary':
     case 'short':

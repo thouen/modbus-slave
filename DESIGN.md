@@ -191,7 +191,7 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 | `long` | Signed 32-bit integer / 有符号 32 位整数 | 32-bit (2 registers) |
 | `float` | IEEE 754 single-precision / 单精度浮点 | 32-bit (2 registers) |
 | `double` | IEEE 754 double-precision / 双精度浮点 | 64-bit (4 registers) |
-| `led` | LED indicator (0/1) / LED 指示 | 1-bit |
+| `bits` | 16-bit 位视图，一行 = 该寄存器的 16 个位（旧名 `led`） | 1 register |
 
 ### Byte Order / 字节序
 
@@ -224,7 +224,7 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 | 宽类型跨度 | 32 位占 2 个寄存器、64 位占 4 个；空间不足或位区域时该类型在选项中禁用（`formatFitsAt()`） |
 | ⭐ 行 = 寄存器 | **四个区视图完全同构**：1 行 = 1 寄存器。位区 1 行 = 16 个位地址，地址列旁附 `位 A~B` 作辅助只读显示（Q20：地址一律按寄存器编号显示） |
 | 位区域渲染 | `coils` / `discreteInputs` 一行一个寄存器，格式化值为 **16 位 LED 开关组**（该寄存器打包的位）；原始 HEX/DEC 列显示打包后的字 |
-| 字区域渲染 | `led` 同样为 16 位可点击位开关组，其余格式为文本 |
+| 字区域渲染 | `bits` 同样为 16 位可点击位开关组，其余格式为文本 |
 | 写入权限 | **不看区域**（R1）：只要从站运行中，四个区都能编辑与提交。`isWritableArea()` 只用于显示"主站只读"徽标 |
 | 值来源（Q7） | 每行一个来源角标（`master` 蓝 / `manual` 琥珀 / `generator` 紫；从未写入显示 `—`），配置条可按来源筛选（不匹配的行**变淡**而不隐藏，保持窗口连续） |
 | 单点 / 区间 | 无需用户选择，按提交的值数量自动决定：1 个值走 `write_register`，多个值走 `write_registers`。两者最终都落到同一个内存写入函数，仅日志粒度不同——这与真实主站"写一个点、写一段用不同写功能码"的行为一致 |
@@ -232,7 +232,7 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 | ⚠️ 提交前守卫 | 「整段提交」在**缓存未覆盖当前窗口**时直接拒绝（`windowMatches()`）：行数不符 或 逐行地址对不上就返回，不做任何写入。这是"回填"这一步的安全前提 —— 回填依赖缓存里的原值，缓存属于别的窗口时回填就是**写错地方** |
 | 失败可见性 | 越界写入由服务端回 `success:false` + 原因，前端写入按从站筛选的错误日志；窗口越界 / 超单帧写上限（>123）则**就地提示并禁用提交** |
 
-> 迁移：旧持久化标签缺少 `formatOverrides` / 字节序 / 数量时由 [`migrateViewTab()`](src/hooks/use-app-state.tsx:80) 补齐，位区域默认格式为 `led`；`migrateViewTab()` 显式构造返回值，因此旧数据里已废弃的 `writeMode` 字段会被自然丢弃。
+> 迁移：旧持久化标签缺少 `formatOverrides` / 字节序 / 数量时由 [`migrateViewTab()`](src/hooks/use-app-state.tsx:80) 补齐，位区域默认格式为 `bits`（旧值 `led` 会被改写为 `bits`）；`migrateViewTab()` 显式构造返回值，因此旧数据里已废弃的 `writeMode` 字段会被自然丢弃。
 
 ## State Management / 状态管理
 

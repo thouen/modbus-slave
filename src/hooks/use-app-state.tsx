@@ -97,6 +97,9 @@ export function migrateViewTab(
   const area: RegisterArea = tab.area ?? 'holdingRegisters';
   const overrides = tab.formatOverrides;
   const rawCount = tab.registerCount ?? tab.quantity ?? 20;
+  // ⚠️ 旧版本把 16 位位视图的类型名写作 `'led'`，现统一更名为 `'bits'`（类型名 + i18n key 同步）。
+  // 旧持久化配置里存的就是 `'led'`，必须在此改写 —— 否则会带一个**已废止的联合成员**进入运行时。
+  const legacyFormat: string | undefined = tab.displayFormat;
   return {
     id: tab.id ?? generateId(),
     name: tab.name ?? '',
@@ -104,7 +107,8 @@ export function migrateViewTab(
     area,
     startAddress: tab.startAddress ?? 0,
     registerCount: Math.min(MAX_READ_REGISTERS_PER_FRAME, Math.max(1, rawCount)),
-    displayFormat: tab.displayFormat ?? (isBitArea(area) ? 'led' : 'hex'),
+    displayFormat:
+      (legacyFormat === 'led' ? 'bits' : tab.displayFormat) ?? (isBitArea(area) ? 'bits' : 'hex'),
     formatOverrides:
       overrides && Object.keys(overrides).length > 0 ? overrides : undefined,
     byteOrder32: tab.byteOrder32 ?? 'ABCD',

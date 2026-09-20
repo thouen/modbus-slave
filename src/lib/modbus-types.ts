@@ -12,7 +12,7 @@ export type ByteOrder32 = 'ABCD' | 'DCBA' | 'BADC' | 'CDAB';
 export type ByteOrder64 = 'ABCDEFGH' | 'HGFEDCBA' | 'BADCFEHG' | 'GHEFCDAB';
 
 export type DataDisplayFormat =
-  | 'led'        // 1-bit LED
+  | 'bits'       // 16-bit 位视图（一行 = 一个寄存器的 16 个位）
   | 'short'      // 16-bit signed
   | 'ushort'     // 16-bit unsigned
   | 'hex'        // 16-bit hexadecimal

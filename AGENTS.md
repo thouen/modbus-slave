@@ -27,7 +27,7 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 ### Core Logic (src/lib/)
 - `modbus-types.ts` — All shared TypeScript types (SlaveConfig, RegisterArea, etc.)
 - `modbus-utils.ts` — Formatting, CRC/LRC calculation, byte order utilities
-  - ⚠️ `formatRegisterValue(registers: RegisterData[], startIndex, format, order32, order64)` 的签名与输出语义**必须与 modbus-master 同步**（hex 不带 `0x`、`led` 为 16 位串、float 6 位 / double 10 位小数）
+  - ⚠️ `formatRegisterValue(registers: RegisterData[], startIndex, format, order32, order64)` 的签名与输出语义**必须与 modbus-master 同步**（hex 不带 `0x`、`bits` 为 16 位串、float 6 位 / double 10 位小数）
   - 逐行类型映射：`getBitsPerValue` / `getSpanForFormat` / `formatFitsAt` / `resolveRegisterLayout`（32 位占 2 个寄存器、64 位占 4 个；位区域恒为 1）
   - 输入解析与编码：`parseDisplayValue` / `encodeValueToRegisters`（行内编辑写入宽类型时使用）
 - `modbus-slave-server.ts` — **核心**：ModBus 从站协议处理 + TCP 服务器

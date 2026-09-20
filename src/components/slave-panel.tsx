@@ -191,7 +191,7 @@ export function SlavePanel() {
    * 四个区用同一套措辞（含字区），这是 Q20 里那个"辅助只读"位地址。
    */
   const bitRange = (areaTotalRegisters: number) =>
-    `${t('bits')} 0 ~ ${Math.max(0, areaTotalRegisters * 16 - 1)}`;
+    `${t('bitLabel')} 0 ~ ${Math.max(0, areaTotalRegisters * 16 - 1)}`;
 
   return (
     <div className="h-full flex flex-col">

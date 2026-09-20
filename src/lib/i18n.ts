@@ -60,7 +60,7 @@ export const translations = {
     startAddress: 'Start Address',
     registerCount: 'Register Count',
     // ⭐ Q20：地址一律按**寄存器**编号显示，位地址/位范围只作辅助只读显示
-    bits: 'bits',
+    bitLabel: 'bit',
     startBit: 'Start bit',
     masterReadOnlyHint: 'Read-only to master · manual injection allowed',
     windowOutOfRange: 'Window exceeds this area’s register total — reduce start address or register count',
@@ -80,7 +80,7 @@ export const translations = {
     wideTypeRequiresRegisters: '32/64-bit types only apply to holding/input registers, not coils.',
 
     // Data display formats
-    formatLed: 'Bits (16-bit)',
+    formatBits: 'Bits (16-bit)',
     formatShort: 'Short (16-bit)',
     formatUShort: 'UShort (16-bit)',
     formatHex: 'Hexadecimal (16-bit)',
@@ -210,7 +210,7 @@ export const translations = {
     startAddress: '起始地址',
     registerCount: '寄存器数量',
     // ⭐ Q20：地址一律按**寄存器**编号显示，位地址/位范围只作辅助只读显示
-    bits: '位',
+    bitLabel: '位',
     startBit: '起始位',
     masterReadOnlyHint: '主站只读 · 仍可手动注入',
     windowOutOfRange: '窗口超出该区总寄存器数量 —— 请调小起始地址或寄存器数量',
@@ -230,7 +230,7 @@ export const translations = {
     wideTypeRequiresRegisters: '32/64 位类型仅适用于保持/输入寄存器，不适用于线圈。',
 
     // 数据显示格式
-    formatLed: 'Bits（位）',
+    formatBits: 'Bits（位）',
     formatShort: '短整型 (16位)',
     formatUShort: '无符号短整型 (16位)',
     formatHex: '十六进制 (16位)',

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { appReducer, migrateViewTab, type AppState } from '@/hooks/use-app-state';
-import type { RegisterViewTab, SlaveConfig } from '@/lib/modbus-types';
+import type { DataDisplayFormat, RegisterViewTab, SlaveConfig } from '@/lib/modbus-types';
 
 // ── 测试数据 ─────────────────────────────────────────────────────
 
@@ -328,9 +328,9 @@ describe('视图标签迁移与绑定', () => {
     );
   });
 
-  it('migrateViewTab 位区域默认 led，并保留已有字段', () => {
+  it('migrateViewTab 位区域默认 bits，并保留已有字段', () => {
     const bitsTab = migrateViewTab({ id: 't3', area: 'coils' });
-    assert.equal(bitsTab.displayFormat, 'led');
+    assert.equal(bitsTab.displayFormat, 'bits');
 
     const explicit = migrateViewTab({
       id: 't4',
@@ -340,6 +340,24 @@ describe('视图标签迁移与绑定', () => {
     });
     assert.equal(explicit.displayFormat, 'float');
     assert.deepEqual(explicit.formatOverrides, { 4: 'double' });
+  });
+
+  it('migrateViewTab 把旧持久化里的 led 改写为 bits（类型更名）', () => {
+    // 旧版本把 16 位位视图类型名写作 'led'；更名后必须迁移，否则会带废止的联合成员进运行时
+    const legacyBit = migrateViewTab({
+      id: 't7',
+      area: 'coils',
+      displayFormat: 'led' as DataDisplayFormat,
+    });
+    assert.equal(legacyBit.displayFormat, 'bits');
+
+    // 字区旧数据同理（旧版本字区也能选 led）
+    const legacyWord = migrateViewTab({
+      id: 't8',
+      area: 'holdingRegisters',
+      displayFormat: 'led' as DataDisplayFormat,
+    });
+    assert.equal(legacyWord.displayFormat, 'bits');
   });
 
   it('migrateViewTab 丢弃旧数据里已废弃的 writeMode 字段', () => {

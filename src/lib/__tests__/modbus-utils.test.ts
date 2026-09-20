@@ -79,7 +79,7 @@ describe('字节序换算', () => {
 });
 
 describe('数据格式化', () => {
-  it('16 位格式（hex 不带 0x 前缀、binary 每 4 位分组、led 为 16 位串）', () => {
+  it('16 位格式（hex 不带 0x 前缀、binary 每 4 位分组、bits 为 16 位串）', () => {
     assert.equal(formatRegisterValue(rows([0x1234]), 0, 'hex', 'ABCD', 'ABCDEFGH'), '1234');
     assert.equal(formatRegisterValue(rows([0xfffe]), 0, 'ushort', 'ABCD', 'ABCDEFGH'), '65534');
     assert.equal(formatRegisterValue(rows([0xfffe]), 0, 'short', 'ABCD', 'ABCDEFGH'), '-2');
@@ -88,11 +88,11 @@ describe('数据格式化', () => {
       '0000 0000 0000 0001',
     );
     assert.equal(
-      formatRegisterValue(rows([1]), 0, 'led', 'ABCD', 'ABCDEFGH'),
+      formatRegisterValue(rows([1]), 0, 'bits', 'ABCD', 'ABCDEFGH'),
       '0000000000000001',
     );
     assert.equal(
-      formatRegisterValue(rows([0]), 0, 'led', 'ABCD', 'ABCDEFGH'),
+      formatRegisterValue(rows([0]), 0, 'bits', 'ABCD', 'ABCDEFGH'),
       '0000000000000000',
     );
   });
@@ -164,7 +164,7 @@ describe('数据格式化', () => {
 
 describe('逐行类型映射', () => {
   it('位数为 1/16/32/64', () => {
-    assert.equal(getBitsPerValue('led'), 1);
+    assert.equal(getBitsPerValue('bits'), 1);
     assert.equal(getBitsPerValue('hex'), 16);
     assert.equal(getBitsPerValue('float'), 32);
     assert.equal(getBitsPerValue('double'), 64);
@@ -230,14 +230,14 @@ describe('逐行类型映射', () => {
       startAddress: 0,
       quantity: 3,
       isWordType: false,
-      defaultFormat: 'led',
+      defaultFormat: 'bits',
     });
 
     assert.equal(layout.size, 3);
     for (let i = 0; i < 3; i++) {
       assert.equal(layout.get(i)?.role, 'start');
       assert.equal(layout.get(i)?.span, 1);
-      assert.equal(layout.get(i)?.format, 'led');
+      assert.equal(layout.get(i)?.format, 'bits');
     }
   });
 });
@@ -276,7 +276,7 @@ describe('registerWindowKey（窗口身份）', () => {
     area: 'coils',
     startAddress: 0,
     registerCount: 20,
-    displayFormat: 'led',
+    displayFormat: 'bits',
     byteOrder32: 'ABCD',
     byteOrder64: 'ABCDEFGH',
   } as const;

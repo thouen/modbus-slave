@@ -50,7 +50,7 @@ const AREA_OPTIONS: { value: RegisterArea; labelKey: TranslationKey; fcHint: str
 
 /** 显示格式选项 */
 const FORMAT_OPTIONS: { value: DataDisplayFormat; labelKey: TranslationKey }[] = [
-  { value: 'led', labelKey: 'formatLed' },
+  { value: 'bits', labelKey: 'formatBits' },
   { value: 'short', labelKey: 'formatShort' },
   { value: 'ushort', labelKey: 'formatUShort' },
   { value: 'hex', labelKey: 'formatHex' },
@@ -63,7 +63,7 @@ const FORMAT_OPTIONS: { value: DataDisplayFormat; labelKey: TranslationKey }[] =
 
 /** Map display format to i18n key */
 const FORMAT_KEY_MAP: Record<DataDisplayFormat, TranslationKey> = {
-  led: 'formatLed',
+  bits: 'formatBits',
   short: 'formatShort',
   ushort: 'formatUShort',
   hex: 'formatHex',
@@ -79,10 +79,10 @@ const BYTE_ORDER_32: ByteOrder32[] = ['ABCD', 'BADC', 'CDAB', 'DCBA'];
 /** 64 位字节序 */
 const BYTE_ORDER_64: ByteOrder64[] = ['ABCDEFGH', 'HGFEDCBA', 'BADCFEHG', 'GHEFCDAB'];
 
-/** 按区域校验默认格式是否可用（位区域只能用 led） */
+/** 按区域校验默认格式是否可用（位区域只能用 bits） */
 function defaultFormatForArea(area: RegisterArea, current: DataDisplayFormat): DataDisplayFormat {
-  if (isBitArea(area)) return 'led';
-  return current === 'led' ? 'hex' : current;
+  if (isBitArea(area)) return 'bits';
+  return current === 'bits' ? 'hex' : current;
 }
 
 /**
@@ -116,7 +116,7 @@ function formatDraftValue(value: number, format: DataDisplayFormat): string {
       const s = value & 0xffff;
       return String(s <= 0x7fff ? s : s - 0x10000);
     }
-    case 'led':
+    case 'bits':
       return Array.from({ length: 16 }, (_, i) => ((value & (1 << (15 - i))) ? '1' : '0')).join('');
     default:
       return String(value);
@@ -411,7 +411,7 @@ export function RegisterViewer() {
 
   /** 只读提示：该寄存器窗口覆盖的**位范围**（Q20 的"辅助只读"） */
   const windowBitRange = activeTab
-    ? `${t('bits')} ${activeTab.startAddress * 16} ~ ${(activeTab.startAddress + activeTab.registerCount) * 16 - 1}`
+    ? `${t('bitLabel')} ${activeTab.startAddress * 16} ~ ${(activeTab.startAddress + activeTab.registerCount) * 16 - 1}`
     : '';
 
   // ⭐ Q7：值来源筛选（dim 非匹配行，不改动表格结构 —— 行恒等于窗口内的寄存器）
@@ -610,7 +610,7 @@ export function RegisterViewer() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {FORMAT_OPTIONS.filter((opt) => isWordArea(activeTab.area) || opt.value === 'led').map((opt) => (
+                {FORMAT_OPTIONS.filter((opt) => isWordArea(activeTab.area) || opt.value === 'bits').map((opt) => (
                   <SelectItem key={opt.value} value={opt.value} className="text-xs">
                     {t(opt.labelKey)}
                   </SelectItem>
@@ -751,7 +751,7 @@ export function RegisterViewer() {
 
 /* ========== 数据表格 ========== */
 
-/** 16 个可点击位开关（寄存器视图的 led 格式） */
+/** 16 个可点击位开关（寄存器视图的 bits 格式） */
 function LedBits({
   value,
   editable,
@@ -933,7 +933,7 @@ function DataTable({
                     {item.address}
                     {bitArea && (
                       <span className="mt-0.5 block w-fit rounded bg-foreground/10 px-1 py-px text-[10px] font-normal leading-none text-muted-foreground">
-                        {t('bits')} {item.address * 16}~{item.address * 16 + 15}
+                        {t('bitLabel')} {item.address * 16}~{item.address * 16 + 15}
                       </span>
                     )}
                   </td>
@@ -971,7 +971,7 @@ function DataTable({
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {FORMAT_OPTIONS.filter((opt) => wordArea || opt.value === 'led').map((opt) => {
+                          {FORMAT_OPTIONS.filter((opt) => wordArea || opt.value === 'bits').map((opt) => {
                             // 空间不足 / 非寄存器区域：禁用无法应用的宽类型
                             const fits = formatFitsAt(opt.value, index, rowCount, wordArea);
                             return (
@@ -997,7 +997,7 @@ function DataTable({
                             : 'bg-foreground/5 ' +
                               (format === 'float' || format === 'double'
                                 ? 'text-primary'
-                                : format === 'led'
+                                : format === 'bits'
                                   ? 'text-success'
                                   : 'text-amber-500')
                         } ${res?.overridden ? 'ring-1 ring-primary/40' : ''}`}
@@ -1013,15 +1013,15 @@ function DataTable({
                     )}
                   </td>
                   {/* 格式化值（行内编辑）。
-                      ⭐ 位区与字区同一套：一行 = 一个寄存器；`led` 格式渲染该寄存器的 16 个位，
+                      ⭐ 位区与字区同一套：一行 = 一个寄存器；`bits` 格式渲染该寄存器的 16 个位，
                       不再有"单个 0/1 按钮"的位-行特例（Q20：四区视图同构）。 */}
                   <td className="w-48 px-3 py-1.5">
-                    {format === 'led' ? (
+                    {format === 'bits' ? (
                       <LedBits
                         value={draftValue ?? item.rawValue}
                         editable={canEdit}
                         drafted={isDrafted}
-                        onChange={(raw) => onCommitCellEdit(tab, item.address, String(raw), 'led', 1)}
+                        onChange={(raw) => onCommitCellEdit(tab, item.address, String(raw), 'bits', 1)}
                       />
                     ) : isEditingThis ? (
                       <input

@@ -6,6 +6,7 @@ import { useI18n } from '@/hooks/use-i18n';
 import { useAppState } from '@/hooks/use-app-state';
 import { useModbusWs } from '@/hooks/use-modbus-ws';
 import {
+  BITS_PER_REGISTER,
   MAX_READ_REGISTERS_PER_FRAME,
   MAX_WRITE_REGISTERS_PER_FRAME,
   isBitArea,
@@ -450,7 +451,7 @@ export function RegisterViewer() {
 
   /** 只读提示：该寄存器窗口覆盖的**位范围**（Q20 的"辅助只读"） */
   const windowBitRange = activeTab
-    ? `${t('bitLabel')} ${activeTab.startAddress * 16} ~ ${(activeTab.startAddress + activeTab.registerCount) * 16 - 1}`
+    ? `${t('bitLabel')} ${activeTab.startAddress * BITS_PER_REGISTER} ~ ${(activeTab.startAddress + activeTab.registerCount) * BITS_PER_REGISTER - 1}`
     : '';
 
   // ⭐ Q7：值来源筛选（dim 非匹配行，不改动表格结构 —— 行恒等于窗口内的寄存器）
@@ -464,7 +465,9 @@ export function RegisterViewer() {
   return (
     <div className="flex h-full min-w-0 flex-col">
       {/* 标签栏 */}
-      <div className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-surface px-1.5 pt-1">
+      {/* ⭐ 固定高度 h-10（40px），与「从站管理」标题栏同高 —— 四个标题/标签栏一律 40px。
+          不靠内容撑高：标签自身字号/内边距一变，高度就会跟着漂。 */}
+      <div className="flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-surface px-1.5">
         {viewTabs.length === 0 && (
           <span className="px-2 py-1 text-[10px] text-muted-foreground">{t('empty')}</span>
         )}
@@ -475,7 +478,7 @@ export function RegisterViewer() {
           return (
             <div
               key={tab.id}
-              className={`group flex shrink-0 cursor-pointer items-center gap-1 rounded-t px-2 py-1 text-[10px] transition-colors ${
+              className={`group flex h-full shrink-0 cursor-pointer items-center gap-1 rounded-t px-2 text-[10px] transition-colors ${
                 isActive
                   ? 'border border-b-transparent border-border bg-card text-foreground -mb-px'
                   : 'text-muted-foreground hover:bg-card/50 hover:text-foreground'
@@ -985,8 +988,10 @@ function DataTable({
                     )}
                     {item.address}
                     {bitArea && (
-                      <span className="mt-0.5 block w-fit rounded bg-foreground/10 px-1 py-px text-[10px] font-normal leading-none text-muted-foreground">
-                        {t('bitLabel')} {item.address * 16}~{item.address * 16 + 15}
+                      // ⭐ 与 master 同一形态：**行内**跟在寄存器号后面（原先是 block + w-fit，会换到第二行）
+                      <span className="ml-1.5 rounded bg-foreground/10 px-1 py-0.5 font-mono text-[10px] font-normal text-muted-foreground">
+                        {t('bitLabel')} {item.address * BITS_PER_REGISTER} ~{' '}
+                        {item.address * BITS_PER_REGISTER + BITS_PER_REGISTER - 1}
                       </span>
                     )}
                   </td>

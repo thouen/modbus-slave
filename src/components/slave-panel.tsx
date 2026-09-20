@@ -200,7 +200,7 @@ export function SlavePanel() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
         <span className="text-xs font-semibold text-foreground">{t('slaves_management')}</span>
         <div className="flex items-center gap-1">
           <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleNew} title={t('newSlave')}>

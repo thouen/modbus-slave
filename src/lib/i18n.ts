@@ -90,27 +90,27 @@ export const translations = {
     formatFloat: 'Float (32-bit)',
     formatDouble: 'Double (64-bit)',
 
-    // Viewer actions
+    // Tab actions
     read: 'Read',
     addTab: 'Add tab',
-    renameTab: 'Rename tab',
+    renameTab: 'Rename Tab',
     empty: 'No tabs available',
     noSlaveSelected: 'Select a slave to view register data',
     noDataHint: 'Click Read to load data',
     slaveStoppedHint: 'Start the slave to view register data',
     selectTabHint: 'Select a tab to view data',
-    createTabHint: 'Create a view tab to start',
+    createTabHint: 'Create a tab to start',
     address: 'Address',
     rawHex: 'Raw HEX',
     rawDec: 'Raw DEC',
-    formattedValue: 'Formatted Value',
+    formattedValue: 'Display Value',
     dataType: 'Type',
     readOnly: 'Read Only',
     writable: 'Writable',
     writeValue: 'Write Value',
     write: 'Write',
     cancel: 'Cancel',
-    newTab: 'New View',
+    newTab: 'New Tab',
     tabName: 'Tab Name',
 
     // Logs
@@ -133,13 +133,14 @@ export const translations = {
     importMerge: 'Merge',
     importStrategy: 'Import Strategy',
     importStrategyDesc: 'How to handle existing configuration',
-    importSuccess: 'Configuration imported successfully',
-    exportSuccess: 'Configuration exported successfully',
+    importSuccess: 'Configuration imported',
+    exportSuccess: 'Configuration exported',
 
     // Status bar
-    runningSlaves: 'Running Slaves',
-    totalSlaves: 'Total Slaves',
-    requestsHandled: 'Requests Handled',
+    // ⭐ R5 术语统一：与 master 状态栏同形 —— 「{n} + 单位词」，英文一律小写
+    runningSlaves: 'running slaves',
+    totalSlaves: 'slaves',
+    logs2: 'logs',
 
     // Common
     save: 'Save',
@@ -147,10 +148,6 @@ export const translations = {
     edit: 'Edit',
     confirm: 'Confirm',
     loading: 'Loading...',
-    connectedDevice: 'running',
-    connections: 'slaves',
-    tabs: 'areas',
-    polling: 'active',
   },
   zh: {
     // App
@@ -179,10 +176,10 @@ export const translations = {
     dataBits: '数据位',
     stopBits: '停止位',
     parity: '校验位',
-    parityNone: '无校验',
+    parityNone: '无',
     parityEven: '偶校验',
     parityOdd: '奇校验',
-    host: '主机地址',
+    host: '主机',
     slaveId: '从站地址',
     start: '启动',
     stop: '停止',
@@ -230,7 +227,7 @@ export const translations = {
     defaultFormatHint: '所有地址的默认格式；可在数据表格中逐行单独设置类型。',
     perRowFormatHint: '逐行类型映射：32 位值占用 2 个寄存器，64 位占用 4 个；被占用的行不可选择。',
     notEnoughRegisters: '寄存器不足',
-    wideTypeRequiresRegisters: '32/64位类型仅适用于保持/输入寄存器，不适用于线圈。',
+    wideTypeRequiresRegisters: '32/64 位类型仅适用于保持/输入寄存器，不适用于线圈。',
 
     // 数据显示格式
     formatLed: 'Bits（位）',
@@ -243,7 +240,7 @@ export const translations = {
     formatFloat: '浮点 (32位)',
     formatDouble: '双精度 (64位)',
 
-    // 视图操作
+    // 标签操作
     read: '读取',
     addTab: '添加标签',
     renameTab: '重命名标签',
@@ -252,18 +249,18 @@ export const translations = {
     noDataHint: '点击「读取」加载数据',
     slaveStoppedHint: '启动从站后才能查看寄存器数据',
     selectTabHint: '请选择一个标签查看数据',
-    createTabHint: '新建视图标签以开始',
+    createTabHint: '新建标签以开始',
     address: '地址',
-    rawHex: '原始HEX',
-    rawDec: '原始DEC',
-    formattedValue: '格式化值',
+    rawHex: '原始 HEX',
+    rawDec: '原始 DEC',
+    formattedValue: '显示值',
     dataType: '类型',
     readOnly: '只读',
     writable: '可写',
     writeValue: '写入值',
     write: '写入',
     cancel: '取消',
-    newTab: '新建视图',
+    newTab: '新建标签',
     tabName: '标签名称',
 
     // Logs
@@ -290,9 +287,10 @@ export const translations = {
     exportSuccess: '配置导出成功',
 
     // Status bar
-    runningSlaves: '运行中从站',
-    totalSlaves: '从站总数',
-    requestsHandled: '已处理请求',
+    // ⭐ R5 术语统一：与 master 同形 —— 「{n} 个X」量词统一
+    runningSlaves: '个运行中从站',
+    totalSlaves: '个从站',
+    logs2: '条日志',
 
     // Common
     save: '保存',
@@ -300,10 +298,6 @@ export const translations = {
     edit: '编辑',
     confirm: '确认',
     loading: '加载中...',
-    connectedDevice: '运行中',
-    connections: '从站',
-    tabs: '区域',
-    polling: '活跃',
   },
 };
 

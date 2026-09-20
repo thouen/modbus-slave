@@ -78,7 +78,7 @@ function StatusBar({ runningCount, totalSlaves, totalLogs }: { runningCount: num
           {runningCount} {t('runningSlaves')}
         </span>
         <span>{totalSlaves} {t('totalSlaves')}</span>
-        <span>{totalLogs} log entries</span>
+        <span>{totalLogs} {t('logs2')}</span>
       </div>
       <div className="flex items-center gap-2">
         <span>ModBus TCP/Serial</span>

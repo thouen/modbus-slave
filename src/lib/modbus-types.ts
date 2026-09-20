@@ -256,6 +256,32 @@ export interface RegisterData {
   source?: ValueSource | null;
 }
 
+// ── Row Notes (R4) ──
+
+/**
+ * **行备注**（R4）：给**某台设备的某个寄存器**挂一段纯文本说明。
+ *
+ * ⭐ 归属层级 = **设备**，不是标签：
+ * - master：`ownerId` = `connectionId`
+ * - slave： `ownerId` = 应用内部 `slaveId`（**不是** ModBus 单元号）
+ *
+ * 同一台设备的同一个点，无论你在哪个标签窗口里看，都该显示**同一条**备注。
+ * 做成标签级 ⇒ 同一台设备开 3 个标签就要重填 3 遍；做成全局 ⇒ A 设备的备注会串到 B 设备。
+ *
+ * 形状：key = `${ownerId}:${area}`（见 {@link rowNotesKey}），
+ * value = `寄存器序号 -> 备注文本`（Q20：一律按寄存器编号，位区 1 个寄存器 = 16 个位地址）。
+ *
+ * ⚠️ 值直接存 `string`、**不套一层对象** —— "备注"的语义就是一句话；
+ * 将来若要加 单位/量程 等字段，那是**点表**（另一次设计），不该靠给备注提前套壳来预留。
+ * 纯文本的迁移成本极低。
+ */
+export type RowNotes = Record<string, Record<number, string>>;
+
+/** 行备注的索引键：`${ownerId}:${area}`（ownerId 见 {@link RowNotes}） */
+export function rowNotesKey(ownerId: string, area: RegisterArea): string {
+  return `${ownerId}:${area}`;
+}
+
 // ── Log Entry ──
 
 export interface LogEntry {

@@ -4,7 +4,7 @@ import { useState, useRef, useMemo } from 'react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppState, createDefaultSlave } from '@/hooks/use-app-state';
 import { useModbusWs } from '@/hooks/use-modbus-ws';
-import type { SlaveConfig, Protocol, Mode, ByteOrder32, ByteOrder64 } from '@/lib/modbus-types';
+import type { SlaveConfig, Protocol, Mode, ByteOrder32, ByteOrder64, RowNotes } from '@/lib/modbus-types';
 import { generateId } from '@/lib/modbus-utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -92,7 +92,7 @@ export function SlavePanel() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSlave, setEditingSlave] = useState<SlaveConfig | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [pendingImport, setPendingImport] = useState<SlaveConfig[] | null>(null);
+  const [pendingImport, setPendingImport] = useState<{ slaves: SlaveConfig[]; rowNotes: RowNotes } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SlaveConfig | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -144,7 +144,8 @@ export function SlavePanel() {
   };
 
   const handleExport = () => {
-    const data = JSON.stringify({ slaves: state.slaves }, null, 2);
+    // R4：行备注一并导出，否则"导出 → 再导入"会静默丢掉用户手录的备注
+    const data = JSON.stringify({ slaves: state.slaves, rowNotes: state.rowNotes }, null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -162,7 +163,7 @@ export function SlavePanel() {
       try {
         const data = JSON.parse(reader.result as string);
         const slaves: SlaveConfig[] = data.slaves ?? [];
-        setPendingImport(slaves);
+        setPendingImport({ slaves, rowNotes: data.rowNotes ?? {} });
         setImportOpen(true);
       } catch {
         // silently ignore
@@ -174,7 +175,10 @@ export function SlavePanel() {
 
   const handleImport = (strategy: 'overwrite' | 'merge') => {
     if (!pendingImport) return;
-    dispatch({ type: 'IMPORT_CONFIG', payload: { slaves: pendingImport, strategy } });
+    dispatch({
+      type: 'IMPORT_CONFIG',
+      payload: { slaves: pendingImport.slaves, rowNotes: pendingImport.rowNotes, strategy },
+    });
     setPendingImport(null);
     setImportOpen(false);
   };

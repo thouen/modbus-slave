@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { appReducer, migrateViewTab, type AppState } from '@/hooks/use-app-state';
+import { appReducer, migrateViewTab, parsePersistedState, type AppState } from '@/hooks/use-app-state';
 import type { DataDisplayFormat, RegisterViewTab, SlaveConfig } from '@/lib/modbus-types';
 
 // ── 测试数据 ─────────────────────────────────────────────────────
@@ -45,6 +45,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     viewTabs: [],
     activeViewTabId: null,
     registerData: {},
+    rowNotes: {},
     logs: [],
     ...overrides,
   };
@@ -491,5 +492,136 @@ describe('日志环形缓冲', () => {
     assert.equal(state.logs.length, 500);
     assert.equal(state.logs[0].id, 'log-20');
     assert.equal(state.logs[499].id, 'log-519');
+  });
+});
+
+// ── 行备注（R4） ─────────────────────────────────────────────────
+
+describe('行备注（R4）', () => {
+  it('SET_ROW_NOTE：给某从站的某个寄存器写入备注（key = slaveId:area）', () => {
+    let state = baseState({ slaves: [makeSlave('s1')] });
+    state = appReducer(state, {
+      type: 'SET_ROW_NOTE',
+      payload: { ownerId: 's1', area: 'holdingRegisters', address: 5, note: '进水温度' },
+    });
+    assert.equal(state.rowNotes['s1:holdingRegisters'][5], '进水温度');
+  });
+
+  it('存的是去掉首尾空白后的文本', () => {
+    let state = baseState();
+    state = appReducer(state, {
+      type: 'SET_ROW_NOTE',
+      payload: { ownerId: 's1', area: 'coils', address: 0, note: '  hi  ' },
+    });
+    assert.equal(state.rowNotes['s1:coils'][0], 'hi');
+  });
+
+  it('同一从站的不同区域互不影响（area 是 key 的一部分）', () => {
+    let state = baseState();
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's1', area: 'coils', address: 0, note: '位区' } });
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's1', area: 'inputRegisters', address: 0, note: '输入区' } });
+    assert.equal(state.rowNotes['s1:coils'][0], '位区');
+    assert.equal(state.rowNotes['s1:inputRegisters'][0], '输入区');
+  });
+
+  it('备注归属设备：不同从站的同地址互不串', () => {
+    let state = baseState();
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's1', area: 'coils', address: 3, note: 'A' } });
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's2', area: 'coils', address: 3, note: 'B' } });
+    assert.equal(state.rowNotes['s1:coils'][3], 'A');
+    assert.equal(state.rowNotes['s2:coils'][3], 'B');
+  });
+
+  it('note 去空白后为空串 ⇒ 删除该条，且空桶整个键被移除', () => {
+    let state = baseState();
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's1', area: 'coils', address: 0, note: 'x' } });
+    assert.equal(state.rowNotes['s1:coils'][0], 'x');
+    const cleared = appReducer(state, {
+      type: 'SET_ROW_NOTE',
+      payload: { ownerId: 's1', area: 'coils', address: 0, note: '   ' },
+    });
+    assert.equal('s1:coils' in cleared.rowNotes, false);
+  });
+
+  it('DELETE_ROW_NOTE：删单条；该条不存在时返回原 state（引用相等）', () => {
+    let state = baseState();
+    const miss = appReducer(state, {
+      type: 'DELETE_ROW_NOTE',
+      payload: { ownerId: 's1', area: 'coils', address: 9 },
+    });
+    assert.equal(miss, state);
+
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's1', area: 'coils', address: 9, note: 'n' } });
+    const next = appReducer(state, {
+      type: 'DELETE_ROW_NOTE',
+      payload: { ownerId: 's1', area: 'coils', address: 9 },
+    });
+    assert.equal('s1:coils' in next.rowNotes, false);
+  });
+
+  it('写同样的值 ⇒ 返回原 state（不触发多余的重渲染 / 持久化）', () => {
+    let state = baseState();
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's1', area: 'coils', address: 0, note: 'hi' } });
+    const again = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's1', area: 'coils', address: 0, note: 'hi' } });
+    assert.equal(again, state);
+  });
+
+  it('DELETE_SLAVE：级联清理该从站的全部备注，其它从站保留', () => {
+    let state = baseState({ slaves: [makeSlave('s1'), makeSlave('s2')] });
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's1', area: 'holdingRegisters', address: 1, note: 'A' } });
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's2', area: 'holdingRegisters', address: 1, note: 'B' } });
+
+    const next = appReducer(state, { type: 'DELETE_SLAVE', payload: 's1' });
+    assert.equal('s1:holdingRegisters' in next.rowNotes, false);
+    assert.equal(next.rowNotes['s2:holdingRegisters'][1], 'B');
+  });
+
+  it('级联清理按 `${id}:` 前缀匹配，不会误删 id 以它为前缀的其它从站（s1 vs s11）', () => {
+    let state = baseState({ slaves: [makeSlave('s1'), makeSlave('s11')] });
+    state = appReducer(state, { type: 'SET_ROW_NOTE', payload: { ownerId: 's11', area: 'coils', address: 2, note: 'X' } });
+
+    const next = appReducer(state, { type: 'DELETE_SLAVE', payload: 's1' });
+    assert.equal(next.rowNotes['s11:coils'][2], 'X');
+  });
+
+  it('IMPORT_CONFIG overwrite：备注整块替换（旧备注被丢弃）', () => {
+    const state = baseState({ slaves: [makeSlave('s1')], rowNotes: { 's1:coils': { 0: '旧' } } });
+    const next = appReducer(state, {
+      type: 'IMPORT_CONFIG',
+      payload: { slaves: [makeSlave('s2')], rowNotes: { 's2:coils': { 1: '新' } }, strategy: 'overwrite' },
+    });
+    assert.deepEqual(next.rowNotes, { 's2:coils': { 1: '新' } });
+  });
+
+  it('IMPORT_CONFIG merge：备注按 id 合并（从站 id 就是 key 里的 ownerId，不需重映射）', () => {
+    const state = baseState({ slaves: [makeSlave('s1')], rowNotes: { 's1:coils': { 0: '本地' } } });
+    const next = appReducer(state, {
+      type: 'IMPORT_CONFIG',
+      payload: { slaves: [makeSlave('s2')], rowNotes: { 's2:coils': { 5: '导入' } }, strategy: 'merge' },
+    });
+    assert.equal(next.rowNotes['s1:coils'][0], '本地');
+    assert.equal(next.rowNotes['s2:coils'][5], '导入');
+  });
+
+  it('持久化往返：从 localStorage 原文解析回来时备注不丢', () => {
+    const persisted = JSON.stringify({
+      slaves: [makeSlave('s1')],
+      viewTabs: [makeTab('t1', 's1')],
+      activeSlaveId: 's1',
+      activeViewTabId: 't1',
+      rowNotes: { 's1:holdingRegisters': { 0: '水温', 12: '流量' } },
+    });
+    const parsed = parsePersistedState(persisted);
+    assert.deepEqual(parsed.rowNotes, { 's1:holdingRegisters': { 0: '水温', 12: '流量' } });
+  });
+
+  it('持久化原文里没有 rowNotes（旧配置）⇒ 回落为空对象，不炸', () => {
+    const parsed = parsePersistedState(JSON.stringify({ slaves: [], viewTabs: [] }));
+    assert.deepEqual(parsed.rowNotes, {});
+  });
+
+  it('持久化原文损坏 / 为空 ⇒ 回到 initialState', () => {
+    assert.deepEqual(parsePersistedState('{not json').rowNotes, {});
+    assert.deepEqual(parsePersistedState(null).rowNotes, {});
   });
 });

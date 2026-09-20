@@ -153,6 +153,10 @@ export const translations = {
     edit: 'Edit',
     confirm: 'Confirm',
     loading: 'Loading...',
+
+    // Row Notes (R4)
+    rowNote: 'Note',
+    rowNotePlaceholder: 'Add a note…',
   },
   zh: {
     // App
@@ -306,6 +310,10 @@ export const translations = {
     edit: '编辑',
     confirm: '确认',
     loading: '加载中...',
+
+    // Row Notes (R4)
+    rowNote: '备注',
+    rowNotePlaceholder: '添加备注…',
   },
 };
 

@@ -11,12 +11,14 @@ import {
   isBitArea,
   isWritableArea,
   isWordArea,
+  rowNotesKey,
   type ByteOrder32,
   type ByteOrder64,
   type DataDisplayFormat,
   type RegisterArea,
   type RegisterData,
   type RegisterViewTab,
+  type RowNotes,
   type ValueSource,
 } from '@/lib/modbus-types';
 import {
@@ -151,6 +153,10 @@ export function RegisterViewer() {
   const [editingCell, setEditingCell] = useState<string | null>(null);
   const [cellValue, setCellValue] = useState('');
   const [editingFormatRow, setEditingFormatRow] = useState<string | null>(null);
+  // 行备注（R4）行内编辑态 —— 与「格式化值」用**独立**的编辑态：
+  // 两者是不同的单元格，共用一个 key 会让"点备注"被值单元格误认成"我正在被编辑"。
+  const [editingNoteCell, setEditingNoteCell] = useState<string | null>(null);
+  const [noteValue, setNoteValue] = useState('');
   // 写入草稿：**窗口身份 -> (寄存器序号 -> 待写入值)**。
   // ⚠️ 按窗口分桶，而不是一张全局表：草稿不带区域，混在一起会把上一个区的待写入值
   // 显示、甚至提交到别的区（见 ROADMAP §3.2「R1 后续修复：跨区串值」）。
@@ -170,6 +176,35 @@ export function RegisterViewer() {
       (activeTab ? writeDrafts[registerWindowKey(activeTab)] : undefined) ??
       new Map<number, number>(),
     [activeTab, writeDrafts],
+  );
+
+  /**
+   * 当前窗口的**行备注桶**（R4）：`寄存器序号 → 备注文本`。
+   *
+   * ⭐ 归属是**从站实例**（= 那台设备），key = `slaveId:area` ⇒ 同一个从站的不同标签
+   * 看到的是同一份备注（"这个寄存器是进水温度"属于设备，不属于某个窗口）。
+   *
+   * ⚠️ 与 `writeDraft` 同理，必须包进 `useMemo`（原因见上一个注释）。
+   */
+  const rowNotesForTab: Record<number, string> = useMemo(() => {
+    if (!activeTab) return {};
+    return state.rowNotes[rowNotesKey(activeTab.slaveId, activeTab.area)] ?? {};
+  }, [state.rowNotes, activeTab]);
+
+  /** 提交一条行备注（R4）：去空白后为空串 ⇒ 删除该条 */
+  const commitRowNote = useCallback(
+    (address: number, raw: string) => {
+      if (!activeTab) return;
+      const ownerId = activeTab.slaveId;
+      const area = activeTab.area;
+      if (raw.trim() === '') {
+        dispatch({ type: 'DELETE_ROW_NOTE', payload: { ownerId, area, address } });
+      } else {
+        dispatch({ type: 'SET_ROW_NOTE', payload: { ownerId, area, address, note: raw } });
+      }
+      setEditingNoteCell(null);
+    },
+    [activeTab, dispatch],
   );
 
   /** 读取标签窗口（⭐ 寄存器单位，Q19 / Q20） */
@@ -726,6 +761,12 @@ export function RegisterViewer() {
           editingFormatRow={editingFormatRow}
           setEditingFormatRow={setEditingFormatRow}
           matchesSourceFilter={matchesSourceFilter}
+          rowNotes={rowNotesForTab}
+          editingNoteCell={editingNoteCell}
+          setEditingNoteCell={setEditingNoteCell}
+          noteValue={noteValue}
+          setNoteValue={setNoteValue}
+          onCommitRowNote={commitRowNote}
           emptyHint={
             slaveStatus[activeTab.slaveId] === 'running' ? t('noDataHint') : t('slaveStoppedHint')
           }
@@ -802,6 +843,12 @@ function DataTable({
   onCommitCellEdit,
   editingFormatRow,
   setEditingFormatRow,
+  rowNotes,
+  editingNoteCell,
+  setEditingNoteCell,
+  noteValue,
+  setNoteValue,
+  onCommitRowNote,
   emptyHint,
   matchesSourceFilter,
 }: {
@@ -827,6 +874,14 @@ function DataTable({
   ) => void;
   editingFormatRow: string | null;
   setEditingFormatRow: (address: string | null) => void;
+  /** 当前窗口的行备注桶（R4）：`寄存器序号 → 文本`；归属**从站实例**（设备），不是标签 */
+  rowNotes: Record<number, string>;
+  editingNoteCell: string | null;
+  setEditingNoteCell: (key: string | null) => void;
+  noteValue: string;
+  setNoteValue: (v: string) => void;
+  /** 提交一条备注；去空白后为空串即删除该条 */
+  onCommitRowNote: (address: number, raw: string) => void;
   emptyHint: string;
   matchesSourceFilter: (row: RegisterData) => boolean;
 }) {
@@ -869,6 +924,8 @@ function DataTable({
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-border/30 bg-surface-container/90 backdrop-blur">
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('address')}</th>
+              {/* 行备注（R4）：归属从站实例（设备），同一从站的每个标签看到同一份备注 */}
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('rowNote')}</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('rawHex')}</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('rawDec')}</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('dataType')}</th>
@@ -930,6 +987,37 @@ function DataTable({
                     {bitArea && (
                       <span className="mt-0.5 block w-fit rounded bg-foreground/10 px-1 py-px text-[10px] font-normal leading-none text-muted-foreground">
                         {t('bitLabel')} {item.address * 16}~{item.address * 16 + 15}
+                      </span>
+                    )}
+                  </td>
+                  {/* 行备注（R4）：点击行内编辑，空值显示 —。
+                      ⚠️ 与"能不能注入值"无关 —— 备注是**本地资料**，不经过 ModBus 协议。 */}
+                  <td className="w-56 px-3 py-1.5">
+                    {editingNoteCell === cellKey ? (
+                      <input
+                        autoFocus
+                        value={noteValue}
+                        placeholder={t('rowNotePlaceholder')}
+                        onChange={(e) => setNoteValue(e.target.value)}
+                        onBlur={() => onCommitRowNote(item.address, noteValue)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') onCommitRowNote(item.address, noteValue);
+                          if (e.key === 'Escape') setEditingNoteCell(null);
+                        }}
+                        className="w-52 rounded border border-primary/40 bg-background px-1.5 py-0.5 text-xs text-foreground outline-none"
+                      />
+                    ) : (
+                      <span
+                        className={`block max-w-52 cursor-pointer truncate rounded px-1.5 py-0.5 text-xs hover:bg-primary/10 ${
+                          rowNotes[item.address] ? 'text-foreground/90' : 'text-muted-foreground/40'
+                        }`}
+                        title={rowNotes[item.address] || undefined}
+                        onClick={() => {
+                          setEditingNoteCell(cellKey);
+                          setNoteValue(rowNotes[item.address] ?? '');
+                        }}
+                      >
+                        {rowNotes[item.address] || '—'}
                       </span>
                     )}
                   </td>

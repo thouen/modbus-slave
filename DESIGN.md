@@ -233,6 +233,7 @@ Endpoint: `/ws/slave`。统一信封 `{ type, payload }`；应用层心跳 `ping
 | 逐行类型 | `formatOverrides: Record<address, DataDisplayFormat>`，由 `resolveRegisterLayout()` 计算每行角色：分组起点可改类型，被宽类型占用的后续行显示 `—` 且不可选 |
 | 宽类型跨度 | 32 位占 2 个寄存器、64 位占 4 个；空间不足或位区域时该类型在选项中禁用（`formatFitsAt()`） |
 | ⭐ 行 = 寄存器 | **四个区视图完全同构**：1 行 = 1 寄存器。位区 1 行 = 16 个位地址，地址列旁附 `位 A~B` 作辅助只读显示（Q20：地址一律按寄存器编号显示） |
+| ⭐ 行备注（R4） | 表格「地址」列后新增一列，点击行内编辑、空值显示 `—`。归属**从站实例**（`key = slaveId:area`，值 = `寄存器序号 -> 文本`），存在 state 顶层 `rowNotes`，**不是标签字段**（同一从站的每个标签看到同一份）。⚠️ 用**独立**编辑态 `editingNoteCell` / `noteValue`，**不复用**值编辑的 `editingCell`；备注与"能否注入值"无关。删除从站按 `slaveId:` 前缀级联清理 |
 | 位区域渲染 | `coils` / `discreteInputs` 一行一个寄存器，格式化值为 **16 位 LED 开关组**（该寄存器打包的位）；原始 HEX/DEC 列显示打包后的字 |
 | 字区域渲染 | `bits` 同样为 16 位可点击位开关组，其余格式为文本 |
 | 写入权限 | **不看区域**（R1）：只要从站运行中，四个区都能编辑与提交。`isWritableArea()` 只用于显示"主站只读"徽标 |

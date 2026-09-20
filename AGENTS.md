@@ -76,6 +76,10 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
   以及约束主站 FC 路径 —— 放开它就不是 ModBus 了。
 - ⭐ **值来源（Q7）**：内存逐寄存器记 `source`（`master` / `manual` / `generator`），
   表格有来源角标 + 可按来源筛选；日志措辞区分（`Master write:` vs `Manual inject:`）。
+- ⭐ **行备注（R4）不是标签字段**：归属**从站实例**，`key = slaveId:area`、值 = `寄存器序号 -> 文本`，
+  存在 state 顶层 `rowNotes`；表格「地址」列后新增一列，点击行内编辑，空值显示 `—`。
+  ⚠️ 用**独立**编辑态（`editingNoteCell` / `noteValue`），**不复用**值编辑的 `editingCell`；
+  备注与"能否注入值"无关（只读区也能写）。删除从站时按 `slaveId:` 前缀级联清理。
 - 行内编辑只写"草稿"，点击「写入」才整段提交；未编辑行回填当前原值，避免部分覆盖。
   ⚠️ **草稿按「窗口身份」= `标签 id + 区域 + 起始地址 + 数量` 分桶**（`registerWindowKey()`，唯一生成处）：
   换窗口 ⇒ 落进不同的桶（不串值、不会写错区）；切回原窗口 ⇒ 同一个桶，**草稿不丢**。

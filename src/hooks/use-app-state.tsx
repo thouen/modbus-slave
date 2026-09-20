@@ -7,12 +7,14 @@ import {
   bitAddressToRegister,
   isBitArea,
   registerSpanToAddressSpan,
+  rowNotesKey,
   withBitSet,
   type SlaveConfig,
   type RegisterArea,
   type RegisterData,
   type LogEntry,
   type RegisterViewTab,
+  type RowNotes,
   type SlaveStatus,
   type ValueSource,
 } from '@/lib/modbus-types';
@@ -38,6 +40,14 @@ export interface AppState {
   activeViewTabId: string | null;
   /** 各从站的寄存器数据缓存（用于UI展示） */
   registerData: Record<string, RegisterData[]>; // viewTabId -> data
+  /**
+   * **行备注**（R4）：`key = slaveId:area` -> `寄存器序号 -> 备注文本`。
+   *
+   * ⭐ 归属是**从站实例**（= 那台"设备"），不是标签：同一台从站的同一个点，
+   * 在引用它的所有标签窗口里看到的都是**同一条**备注。
+   * ⚠️ 要**持久化** —— 备注是用户手录的资料，重启后必须还在。
+   */
+  rowNotes: RowNotes;
   logs: LogEntry[]; // 全局日志（按 slaveId 筛选展示）
 }
 
@@ -65,9 +75,27 @@ export type Action =
       payload: { running: Array<{ slaveId: string; config: SlaveConfig }> };
     }
   | { type: 'SET_RUNNING_CONFIG'; payload: { id: string; config: SlaveConfig | null } }
+  | {
+      /**
+       * 写一条**行备注**（R4）。
+       *
+       * ⚠️ `ownerId` 是**从站实例 id**（应用内部 id，**不是** ModBus 单元号）；
+       * `address` 是**寄存器序号**（Q20）。`note` 去空白后为空串 ⇒ 等价于删除该条备注。
+       */
+      type: 'SET_ROW_NOTE';
+      payload: { ownerId: string; area: RegisterArea; address: number; note: string };
+    }
+  | {
+      /** 删除一条**行备注**（R4） */
+      type: 'DELETE_ROW_NOTE';
+      payload: { ownerId: string; area: RegisterArea; address: number };
+    }
   | { type: 'ADD_LOG'; payload: LogEntry }
   | { type: 'CLEAR_LOGS'; payload?: string } // slaveId，缺省清全部
-  | { type: 'IMPORT_CONFIG'; payload: { slaves: SlaveConfig[]; strategy: 'overwrite' | 'merge' } }
+  | {
+      type: 'IMPORT_CONFIG';
+      payload: { slaves: SlaveConfig[]; rowNotes?: RowNotes; strategy: 'overwrite' | 'merge' };
+    }
   | { type: 'HYDRATE'; payload: AppState };
 
 const initialState: AppState = {
@@ -78,6 +106,7 @@ const initialState: AppState = {
   viewTabs: [],
   activeViewTabId: null,
   registerData: {},
+  rowNotes: {},
   logs: [],
 };
 
@@ -118,12 +147,16 @@ export function migrateViewTab(
   };
 }
 
-/** 从 localStorage 恢复持久化配置 */
-function loadPersistedState(): AppState {
-  if (typeof window === 'undefined') return initialState;
+/**
+ * **纯函数**：把 localStorage 里的原始字符串解析成 `AppState`。
+ *
+ * 抽成纯函数是为了**可单测**：持久化往返是"静默丢数据"的高发点 ——
+ * 少读一个字段在运行时完全无感（`undefined` 默默地变成默认值），只有重启后
+ * 才发现用户录的资料没了。所以这一层必须有测试盯着。
+ */
+export function parsePersistedState(raw: string | null): AppState {
+  if (!raw) return initialState;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return initialState;
     const parsed = JSON.parse(raw) as Partial<AppState>;
     const slaves = parsed.slaves ?? [];
     const viewTabs = (parsed.viewTabs ?? []).map(migrateViewTab);
@@ -131,6 +164,8 @@ function loadPersistedState(): AppState {
       ...initialState,
       slaves,
       viewTabs,
+      // 行备注（R4）是用户手录的资料，必须随配置一起恢复
+      rowNotes: parsed.rowNotes ?? {},
       /** 运行时状态不持久化：一律从 stopped 开始，等待服务端快照校正 */
       slaveStatus: Object.fromEntries(slaves.map(s => [s.id, 'stopped' as SlaveStatus])),
       activeSlaveId: parsed.activeSlaveId ?? null,
@@ -139,6 +174,12 @@ function loadPersistedState(): AppState {
   } catch {
     return initialState;
   }
+}
+
+/** 从 localStorage 恢复持久化配置 */
+function loadPersistedState(): AppState {
+  if (typeof window === 'undefined') return initialState;
+  return parsePersistedState(localStorage.getItem(STORAGE_KEY));
 }
 
 /**
@@ -170,6 +211,11 @@ export function appReducer(state: AppState, action: Action): AppState {
       const remainingTabs = state.viewTabs.filter(t => t.slaveId !== action.payload);
       const newRegisterData = { ...state.registerData };
       removedTabs.forEach(t => { delete newRegisterData[t.id]; });
+      // 级联清理该从站的全部行备注（R4）：备注的归属是"设备"，
+      // 从站都没了，`slaveId:area` 这些键就再没有主人 —— 留着只是垃圾。
+      const rowNotes = Object.fromEntries(
+        Object.entries(state.rowNotes).filter(([k]) => !k.startsWith(`${action.payload}:`)),
+      );
       return {
         ...state,
         slaves: state.slaves.filter(s => s.id !== action.payload),
@@ -178,6 +224,7 @@ export function appReducer(state: AppState, action: Action): AppState {
         activeSlaveId: state.activeSlaveId === action.payload ? null : state.activeSlaveId,
         viewTabs: remainingTabs,
         registerData: newRegisterData,
+        rowNotes,
         activeViewTabId: remainingTabs.find(t => t.id === state.activeViewTabId)?.id ?? null,
       };
     }
@@ -388,6 +435,44 @@ export function appReducer(state: AppState, action: Action): AppState {
 
       return mutated ? { ...state, registerData } : state;
     }
+    case 'SET_ROW_NOTE': {
+      const { ownerId, area, address, note } = action.payload;
+      const key = rowNotesKey(ownerId, area);
+      const trimmed = note.trim();
+      const bucket = state.rowNotes[key];
+      const existing = bucket?.[address];
+
+      // 去空白后为空串 ⇒ 等价于清除该条备注（不留一条"看着有、其实是空白"的备注）
+      if (trimmed === '') {
+        if (!bucket || existing === undefined) return state;
+        const rest = { ...bucket };
+        delete rest[address];
+        const rowNotes = { ...state.rowNotes };
+        if (Object.keys(rest).length === 0) delete rowNotes[key]; // 空桶不留在状态里
+        else rowNotes[key] = rest;
+        return { ...state, rowNotes };
+      }
+
+      // 无变化就直接返回原 state：避免无谓的重渲染与一次 localStorage 写入
+      if (existing === trimmed) return state;
+
+      return {
+        ...state,
+        rowNotes: { ...state.rowNotes, [key]: { ...(bucket ?? {}), [address]: trimmed } },
+      };
+    }
+    case 'DELETE_ROW_NOTE': {
+      const { ownerId, area, address } = action.payload;
+      const key = rowNotesKey(ownerId, area);
+      const bucket = state.rowNotes[key];
+      if (!bucket || bucket[address] === undefined) return state;
+      const rest = { ...bucket };
+      delete rest[address];
+      const rowNotes = { ...state.rowNotes };
+      if (Object.keys(rest).length === 0) delete rowNotes[key];
+      else rowNotes[key] = rest;
+      return { ...state, rowNotes };
+    }
     case 'ADD_LOG': {
       const newLogs = [...state.logs, action.payload];
       if (newLogs.length > MAX_LOG_ENTRIES) {
@@ -405,13 +490,16 @@ export function appReducer(state: AppState, action: Action): AppState {
       };
     }
     case 'IMPORT_CONFIG': {
+      const importedNotes = action.payload.rowNotes ?? {};
       if (action.payload.strategy === 'overwrite') {
         return {
           ...state,
           slaves: action.payload.slaves,
+          // 覆盖：备注整块替换（导出里没有备注字段 ⇒ 视为空）
+          rowNotes: importedNotes,
         };
       }
-      // merge: by id
+      // merge: by id（从站 id 就是备注 key 里的 ownerId ⇒ 不需要重映射）
       const existing = new Map(state.slaves.map(s => [s.id, s]));
       for (const s of action.payload.slaves) {
         existing.set(s.id, s);
@@ -419,6 +507,7 @@ export function appReducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         slaves: Array.from(existing.values()),
+        rowNotes: { ...state.rowNotes, ...importedNotes },
       };
     }
     case 'HYDRATE': {
@@ -451,9 +540,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       viewTabs: state.viewTabs,
       activeSlaveId: state.activeSlaveId,
       activeViewTabId: state.activeViewTabId,
+      rowNotes: state.rowNotes,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toPersist));
-  }, [state.slaves, state.viewTabs, state.activeSlaveId, state.activeViewTabId]);
+  }, [state.slaves, state.viewTabs, state.activeSlaveId, state.activeViewTabId, state.rowNotes]);
 
   return <AppContext.Provider value={{ state, dispatch }}>{children}</AppContext.Provider>;
 }

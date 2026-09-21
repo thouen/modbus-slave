@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════
 # 非容器安装脚本（在目标 Linux 上执行）
 #
-# ⚠️ 与 modbus-master 仓库那份**内容完全一样**，应用名取自目录名。
+# ⚠️ 两个仓库里本文件**内容完全一样**，应用名取自目录名（master / slave 通用）。
 #
 # 用法 A：先解包到 /opt，再装
 #   sudo mkdir -p /opt/modbus-simulator
@@ -15,6 +15,7 @@
 # 环境变量：
 #   INSTALL_ROOT=/opt/modbus-simulator   解包根目录（用法 B）
 #   SVC_USER=modbus                      运行用户
+#   COREPACK_HOME=/var/lib/corepack      corepack / pnpm 缓存目录（root 与服务用户共享）
 #   SKIP_BUILD=1                         只装依赖、不构建
 #
 # 做的事：
@@ -30,6 +31,19 @@ set -Eeuo pipefail
 
 INSTALL_ROOT="${INSTALL_ROOT:-/opt/modbus-simulator}"
 SVC_USER="${SVC_USER:-modbus}"
+
+# ── corepack / pnpm 缓存目录（要在**第一次调用 pnpm 之前**定好）─────────
+# ⭐ corepack 把 pnpm 本体缓存在 $HOME/.cache/node/corepack —— **每个用户各一份**。
+#    你交互式 shell 里的 pnpm 属于**你自己的用户**，脚本却要以 **$SVC_USER** 身份跑 pnpm，
+#    那个用户没有缓存 ⇒ corepack 会"为一个新用户重新下载一遍 pnpm"（看起来就像在联网装 pnpm）。
+#    指定一个**共享**目录后：root 先跑一次把包取下来，服务用户直接复用 ⇒ 全程只下载一次。
+#    （非 root 运行时没有共享的必要，退回默认的每用户缓存。）
+COREPACK_HOME="${COREPACK_HOME:-}"
+if [[ "$(id -u)" == "0" ]]; then
+    [[ -n "$COREPACK_HOME" ]] || COREPACK_HOME="/var/lib/corepack"
+    mkdir -p "$COREPACK_HOME"
+    export COREPACK_HOME
+fi
 
 # ── 定位应用目录 ───────────────────────────────────────────────
 if [[ -n "${1:-}" ]]; then
@@ -119,6 +133,7 @@ esac
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 [[ "$NODE_MAJOR" -ge 20 ]] || echo "⚠️ Node 主版本 $NODE_MAJOR 偏低，Next 16 要求 >= 20.9"
 echo "  node $(node -v)（$NODE_AT） / pnpm $(pnpm -v)"
+if [[ -n "${COREPACK_HOME:-}" ]]; then echo "  corepack 缓存：$COREPACK_HOME"; fi
 
 # ── ② 运行用户与权限 ───────────────────────────────────────────
 RUNNER=""
@@ -138,18 +153,22 @@ if [[ "$(id -u)" == "0" ]]; then
         usermod -d "$SVC_HOME" "$SVC_USER" 2>/dev/null || true
     fi
 
-    # ⚠️ 关键一步：corepack / pnpm 会在 $HOME/.cache 下写缓存。
+    # ⚠️ 关键一步：pnpm 也会往 $HOME/.cache 写东西（即便 corepack 用了共享目录）。
     #    只 chown 应用目录是不够的 —— 这正是
     #    "EACCES: mkdir '<home>/.cache/node/corepack/v1'" 的来源。
     mkdir -p "$SVC_HOME/.cache"
     chown -R "$SVC_USER":"$SVC_USER" "$SVC_HOME/.cache"
     chown -R "$SVC_USER":"$SVC_USER" "$REPO_ROOT"
 
-    # 显式传 HOME：避免 runuser / sudo 不改 HOME 时把缓存写进 root 家目录
+    # 上面 root 已经跑过 pnpm ⇒ 共享缓存里已经有包；交给服务用户，避免它再下一遍
+    if [[ -n "${COREPACK_HOME:-}" ]]; then chown -R "$SVC_USER":"$SVC_USER" "$COREPACK_HOME"; fi
+
+    # 显式传 HOME 与 COREPACK_HOME：runuser / sudo 会重置环境，
+    # 不传的话缓存会被写进 root 家目录，或服务用户又去下载一份
     if command -v runuser >/dev/null 2>&1; then
-        RUNNER="runuser -u $SVC_USER -- env HOME=$SVC_HOME"
+        RUNNER="runuser -u $SVC_USER -- env HOME=$SVC_HOME COREPACK_HOME=$COREPACK_HOME"
     else
-        RUNNER="sudo -u $SVC_USER env HOME=$SVC_HOME"
+        RUNNER="sudo -u $SVC_USER env HOME=$SVC_HOME COREPACK_HOME=$COREPACK_HOME"
     fi
 else
     echo "ℹ️ 非 root 运行：跳过建用户/改属主，用当前用户 $(id -un) 安装"
@@ -180,10 +199,14 @@ if [[ -f "$WS_FILE" ]]; then
 fi
 
 # ── ④ 装依赖 ───────────────────────────────────────────────────
-# corepack 以**服务用户**身份第一次跑 pnpm 时，会把 pnpm 本体下载到 $HOME/.cache。
+# 以**服务用户**身份第一次跑 pnpm 时，corepack 可能要现取 pnpm 本体。
 # 先单独跑一次，让"没网 / 缓存目录不可写"这类问题在这一步就明确暴露，
 # 而不是混在 install 的一大堆输出里。
-echo "▶ 预热 pnpm（corepack 首次以服务用户运行需联网下载 pnpm 本体）"
+if [[ -n "$RUNNER" ]]; then
+    echo "▶ 预热 pnpm：以 $SVC_USER 身份跑一次（共享缓存已备好时这步是秒过）"
+else
+    echo "▶ 检查 pnpm"
+fi
 $RUNNER pnpm --version
 
 echo "▶ pnpm install --frozen-lockfile（⚠️ 不加 --prod：构建需要 tsup / typescript）"

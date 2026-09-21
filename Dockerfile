@@ -1,11 +1,12 @@
 # ═══════════════════════════════════════════════════════════════════
 # modbus-slave —— 从站（Next.js 自定义服务器 + WebSocket + ModBus TCP/串口）
 #
-# ⚠️ 本文件的构建/启动方式与 modbus-master **刻意不同**，是跟随各自现状：
-#        build = 只 next build（不打包）
-#        run   = tsx src/server.ts   ← 用 TS 执行器现场跑源码
-#    ⚠️ 直接后果：运行期镜像里**必须**保留 src/ 和 tsconfig.json，且必须装 tsx。
-#    原因（修 P0-5 时选的最小改动）见 DEPLOY.md §2.3。
+# ✅ 构建/启动方式已与 modbus-master **统一**（2026-09-21）：
+#        build = next build + tsup 打包  →  dist/server.js
+#        run   = node dist/server.js
+#    历史上这里是 `tsx src/server.ts`（跑源码）。2026-09-21 改回扣子模板原有的
+#    打包方式，与 master 一致。直接后果：运行期**不再需要** src/ 和 tsconfig.json。
+#    原因、取舍与实测记录见 DEPLOY.md §2.3。
 #
 # ⚠️ 两条维护红线（都是实测踩出来的，别改回去）：
 #    1. Dockerfile **不支持行内注释**。`COPY a b   # 说明` 里的 `# 说明`
@@ -45,10 +46,24 @@ COPY scripts ./scripts
 
 RUN pnpm install --frozen-lockfile
 
+# 再拷源码（node_modules / .next / dist 已被 .dockerignore 排除）
 COPY . .
 
+# ⚠️ next build 峰值要 1.5~2GB 堆，不放开上限会在小机器上 OOM
 ENV NODE_OPTIONS=--max-old-space-size=2048
+
+# ① 前端产物 → .next/
 RUN pnpm exec next build
+
+# ② 自定义服务器 → dist/server.js
+#    tsup 会把 server.ts 引用到的 TS 全部内联（含 ws-handlers/slave.ts），
+#    @/ 别名也在这一步解析掉，所以运行期**不再需要** src/ 和 tsconfig.json。
+#    ⚠️ ws-handlers/slave.ts 里的 require('serialport') 是**可选动态加载**（包在 try/catch 里）。
+#       已实测：tsup 把它原样保留成外部 require，try/catch 不受影响 ——
+#       没装 serialport 时串口模式优雅降级，不会崩。改动前后都别把这个 require 挪出 try。
+RUN pnpm exec tsup src/server.ts \
+      --format cjs --platform node --target node20 \
+      --outDir dist --no-splitting --no-minify
 
 # ── Stage 2：运行 ──────────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS runner
@@ -80,25 +95,19 @@ ENV COZE_PROJECT_ENV=PROD
 ENV NODE_ENV=production
 ENV DEPLOY_RUN_PORT=5001
 # ⚠️ 必须显式写死：Docker 默认会把容器 ID 塞进 HOSTNAME，
-#    而 scripts/start.sh 用的是 ${HOSTNAME:-0.0.0.0} —— 冒号兜底**不会生效**
-#    （该变量在容器里已经非空），结果 Next 会拿到一串容器 ID。
+#    而 server.ts 会读它传给 next()。不覆盖就会拿到一串容器 ID。
 ENV HOSTNAME=0.0.0.0
 
-# ── 运行期需要的文件（注释必须独占一行，见文件头红线 1）──
+# ── 运行期需要的产物（注释必须独占一行，见文件头红线 1）──
 
 # Next 生产产物
 COPY --from=builder /app/.next ./.next
 
+# 自定义服务器产物（tsup 输出，自包含）
+COPY --from=builder /app/dist ./dist
+
 # Next 运行期仍会读配置
 COPY --from=builder /app/next.config.ts ./next.config.ts
-
-# ⚠️ 下面两个是"跑源码"路线特有的必需品，删掉会在启动瞬间就崩：
-
-# 生产执行的正是 src/server.ts，所以源码必须在
-COPY --from=builder /app/src ./src
-
-# tsx 靠它的 paths 解析 @/* 别名，少了它连 import 都过不去
-COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
 # ⚠️ 本应用**没有 public/ 目录**（不是漏拷），所以这里没有 COPY public。
 # ⚠️ scripts/ 已经在安装依赖前拷好了（prepare 脚本要用），这里不再重复拷。
@@ -112,5 +121,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
 
 # ⚠️ 不要改成 next start —— 它会跳过 server.on('upgrade')，/ws/slave 直接消失，
 #    表现是"页面能开、按钮能点，但所有实时功能静默失效"。
-# 用 pnpm exec 是为了与 scripts/start.sh 行为完全一致（会把 node_modules/.bin 加进 PATH）。
-CMD ["pnpm", "exec", "tsx", "src/server.ts"]
+#    等价于 scripts/start.sh 里的 `PORT=$DEPLOY_RUN_PORT node dist/server.js`。
+CMD ["node", "dist/server.js"]

@@ -51,9 +51,13 @@ Thumbs.db
 
 # ⚠️ 以下**故意不排除**，动了会导致构建或运行失败：
 #   .npmrc        —— 指定了 registry.npmmirror.com，是构建提速的关键
-#   src/          —— ⚠️ 运行期必须要有！生产是用 tsx 现场执行 src/server.ts
-#   tsconfig.json —— ⚠️ 运行期必须要有！tsx 靠它的 paths 解析 @/* 别名
+#   src/          —— 构建期必须要有（next build 与 tsup 都要读源码）
+#   tsconfig.json —— 构建期必须要有（tsup 靠它的 paths 解析 @/* 别名）
 #   next.config.ts—— 构建期需要，运行期 Next 也会读
 #   scripts/      —— 保留，便于在容器内用同一套脚本排查
+#
+# ℹ️ 2026-09-21 起两端统一为「tsup 打包 → node dist/server.js」，
+#    所以 src/ 与 tsconfig.json **只在构建期**需要，运行期镜像不再拷它们。
+#    （"不在本清单里" = 会进构建上下文，这是对的；容器里最终放什么由 Dockerfile 决定。）
 #
 # ⚠️ 注意：本应用**没有 public/ 目录**（不是遗漏），所以 Dockerfile 里不会 COPY public。

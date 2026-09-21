@@ -122,6 +122,22 @@ docker compose down
 >   但"**从容器外**能访问"的端口必须写进 `ports:`，端口多时用**区间**：`"502-505:502-505"`。
 >   ⇒ 界面里改了端口但容器外连不上，是**端口没发布**，不是容器不行。
 
+## 进程管理器（systemd / supervisor）
+
+仓库根目录带一份 **`modbus-slave.conf.example`**（supervisor 配置示例）。用法：
+
+```bash
+sudo cp modbus-slave.conf.example /etc/supervisor/conf.d/modbus-slave.conf
+sudo supervisorctl reread && sudo supervisorctl update
+```
+
+> ⚠️ supervisor 只管"跑"，**构建仍要自己做**（`pnpm install --frozen-lockfile && pnpm run build`）。
+> ⚠️ 示例里的 `directory` / `user` 要按实际路径改；注释**必须独占一行**（supervisor 不支持行内注释）。
+> ⚠️ **502 是特权端口**，而 supervisor **没有** systemd 那种 `AmbientCapabilities` ⇒
+> 绑 502 只能靠 `setcap` / 改内核阈值 / 换 >=1024 端口（示例文件注释里有具体命令）。
+> ⚠️ 要用串口则把该 `user` 加进 `dialout` 组。
+> systemd unit 与完整的 502/串口说明见父目录 `DEPLOY.md §3–§4`。
+
 ## Quality Checklist / 质量检查清单
 
 - [ ] TypeScript compiles with no errors

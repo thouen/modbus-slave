@@ -1,0 +1,73 @@
+; ═══════════════════════════════════════════════════════════════════
+; ModBus Slave（从站）—— supervisor 配置示例
+;
+; 用法：
+;   sudo cp modbus-slave.conf.example /etc/supervisor/conf.d/modbus-slave.conf
+;   （RHEL/CentOS 系换成 /etc/supervisord.d/modbus-slave.conf）
+;   按需修改下面的 directory / user
+;   sudo supervisorctl reread && sudo supervisorctl update
+;   sudo supervisorctl status modbus-slave
+;
+; 前提：先把产物构建出来 —— supervisor 只负责"跑"，不负责"构建"：
+;   pnpm install --frozen-lockfile && pnpm run build
+;   产出 dist/server.js 与 .next/，详见 DEPLOY.md §2.2
+;
+; ⚠️ supervisor **不支持行内注释** —— 本文件所有注释都独占一行，
+;    千万不要在指令后面追加 `; 说明`，那会被当成配置值的一部分。
+; ═══════════════════════════════════════════════════════════════════
+
+[program:modbus-slave]
+command=/bin/bash ./scripts/start.sh
+directory=/opt/modbus-simulator/modbus-slave
+user=modbus
+
+; ⚠️ 下面这行是必需的，不是可选。五个变量各有各的用处：
+;   COZE_PROJECT_ENV=PROD  —— 唯一的生产开关，不给会跑成 dev 模式（不报错，但慢几十倍）
+;   DEPLOY_RUN_PORT=5001   —— 管理界面/WS 端口（server.ts 读的就是它，不是 PORT）
+;   HOSTNAME=0.0.0.0       —— 不给时 server.ts 会退回 localhost
+;   NODE_ENV=production    —— 让 Next 与依赖走生产分支
+;   NODE_OPTIONS=...       —— 小内存机器上避免 V8 堆过小
+environment=COZE_PROJECT_ENV="PROD",DEPLOY_RUN_PORT="5001",HOSTNAME="0.0.0.0",NODE_ENV="production",NODE_OPTIONS="--max-old-space-size=2048"
+
+autostart=true
+autorestart=unexpected
+startsecs=5
+startretries=3
+
+; ⚠️ start.sh 是 bash，node 是它的子进程。必须连整个进程组一起杀，
+;    否则 stop 之后会留下孤儿 node 继续占着 5001 端口，下次起不来。
+stopasgroup=true
+killasgroup=true
+stopsignal=TERM
+stopwaitsecs=10
+
+stdout_logfile=/var/log/supervisor/modbus-slave.out.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=5
+stderr_logfile=/var/log/supervisor/modbus-slave.err.log
+stderr_logfile_maxbytes=10MB
+stderr_logfile_backups=5
+
+; ── ⚠️ 502 特权端口（从站特有） ─────────────────────────────────
+; 从站默认会绑 ModBus 标准端口 502，而 502 < 1024 属特权端口。
+; 关键差异：supervisor **没有** systemd 那种 AmbientCapabilities，
+; **无法**给进程单独授权。所以要用 502，只能从下面几条里挑一条
+; （完整说明见 DEPLOY.md §3.3）：
+;
+;   ① 给 node 二进制打标签（推荐，进程仍以非 root 运行）：
+;        sudo setcap 'cap_net_bind_service=+ep' "$(readlink -f "$(which node)")"
+;        ⚠️ node 一升级/重装标签就失效，要重打，否则某天突然 EACCES
+;
+;   ② 放开内核阈值（影响全机所有进程，安全敏感环境慎用）：
+;        echo 'net.ipv4.ip_unprivileged_port_start=502' | sudo tee /etc/sysctl.d/99-modbus.conf
+;        sudo sysctl --system
+;
+;   ③ 最省事：UI 里把从站端口填成 1502 之类 >= 1024 的端口（演示最常用）
+;
+;   ④ 下策：把上面的 user=modbus 改成 user=root（整个从站以 root 暴露在网络面，不推荐）
+;
+; ── 串口（可选，RTU/ASCII） ───────────────────────────────────
+; 让 user 属于 dialout 组，否则打不开 /dev/ttyUSB* / /dev/ttyS*：
+;   sudo usermod -aG dialout modbus
+;   sudo supervisorctl restart modbus-slave
+; ⚠️ serialport 是可选的动态依赖：没装时只是串口模式不可用，TCP 模式照常。

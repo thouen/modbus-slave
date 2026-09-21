@@ -49,12 +49,76 @@ cd "$REPO_ROOT"
 echo "▶ 安装目录：$REPO_ROOT（应用：$APP_NAME）"
 
 # ── ① 环境检查 ─────────────────────────────────────────────────
-command -v node >/dev/null 2>&1 || { echo "❌ 找不到 node，请先装 Node 20.9+（建议 22 LTS）"; exit 1; }
+# sudo 会把 HOME 指到 /root，而版本管理器装在**真实用户**家里 ⇒ 还原他的 home 再判断
+REAL_USER="${SUDO_USER:-$(id -un)}"
+USER_HOME="$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6 || true)"
+[[ -n "$USER_HOME" ]] || USER_HOME="${HOME:-/root}"
+
+node_missing_help() {
+    echo "❌ 当前环境里找不到 node。"
+    echo
+    if [[ -d "$USER_HOME/.local/share/fnm" || -d "$USER_HOME/.fnm" ]]; then
+        cat <<'EOT'
+看起来你用 fnm 装了 node —— 但**脚本和 sudo 里都没有它**。
+fnm 是靠 shell 初始化（eval "$(fnm env)"）把 node 塞进 PATH 的，
+非交互脚本不读 .bashrc，sudo 还会用 secure_path 把 PATH 整个换掉。
+
+⚠️ 这不是只影响本脚本：systemd / supervisor 启动时也不会执行你的 shell 初始化，
+   所以服务本身同样找不到 node。建议**一次修好**——把 node 链进 /usr/local/bin
+   （该目录在 sudo 的 secure_path 和 systemd 的默认 PATH 里都有）。
+
+在**交互式 shell** 里执行：
+
+  FNM_BIN="$(dirname "$(fnm exec --using=default -- which node)")"
+  echo "$FNM_BIN"                    # 期望：/home/<你的用户名>/.local/share/fnm/aliases/default/bin
+  sudo ln -sf "$FNM_BIN/node" /usr/local/bin/node
+  sudo ln -sf "$FNM_BIN/npm"  /usr/local/bin/npm
+  sudo ln -sf "$FNM_BIN/npx"  /usr/local/bin/npx
+  sudo ln -sf "$FNM_BIN/corepack" /usr/local/bin/corepack
+  sudo corepack enable && sudo corepack prepare pnpm@9.0.0 --activate
+
+用 aliases/default 而不是 node-versions/<版本号>：前者是指向当前默认版本的链接，
+以后 fnm 升级 node 会自动跟着变，不用重链。
+EOT
+    elif [[ -s "$USER_HOME/.nvm/nvm.sh" ]]; then
+        cat <<'EOT'
+看起来你用 nvm 装了 node —— 它同样靠 shell 初始化注入 PATH，脚本/sudo 里没有。
+
+在**交互式 shell** 里先拿到路径，再链到 /usr/local/bin：
+
+  nvm which default                  # 例：/home/<你的用户名>/.nvm/versions/node/v22.x.x/bin/node
+  NODE_BIN="$(dirname "$(nvm which default)")"
+  sudo ln -sf "$NODE_BIN/node" /usr/local/bin/node
+  sudo ln -sf "$NODE_BIN/npm"  /usr/local/bin/npm
+  sudo ln -sf "$NODE_BIN/npx"  /usr/local/bin/npx
+  sudo corepack enable && sudo corepack prepare pnpm@9.0.0 --activate
+EOT
+    else
+        echo "请先安装 Node 20.9+（建议 22 LTS），并让它位于 /usr/local/bin 或 /usr/bin："
+        echo "  系统级安装推荐 NodeSource 或发行版自带的包管理器（详见 DEPLOY.md §1）。"
+        echo
+        echo "⚠️ 即便你在交互式终端里能跑 node，只要它是靠 fnm / nvm / n 这类版本管理器"
+        echo "   注入 PATH 的，本脚本与 systemd / supervisor 都看不到它。"
+    fi
+    exit 1
+}
+
+command -v node >/dev/null 2>&1 || node_missing_help
 command -v pnpm >/dev/null 2>&1 || { echo "❌ 找不到 pnpm。先跑：corepack enable && corepack prepare pnpm@9.0.0 --activate"; exit 1; }
+
+# node 找到了，但如果是版本管理器提供的，服务仍然会起不来 —— 提前警告
+NODE_AT="$(command -v node)"
+case "$NODE_AT" in
+    */.nvm/*|*/fnm/*|*/node-versions/*|*/aliases/*)
+        echo "⚠️ node 来自版本管理器：$NODE_AT"
+        echo "   你现在能跑，但 systemd / supervisor 启动时不会执行 shell 初始化 ⇒ 服务会找不到 node。"
+        echo "   建议把它链到 /usr/local/bin（做法见上面）。"
+        ;;
+esac
 
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 [[ "$NODE_MAJOR" -ge 20 ]] || echo "⚠️ Node 主版本 $NODE_MAJOR 偏低，Next 16 要求 >= 20.9"
-echo "  node $(node -v) / pnpm $(pnpm -v)"
+echo "  node $(node -v)（$NODE_AT） / pnpm $(pnpm -v)"
 
 # ── ② 运行用户与权限 ───────────────────────────────────────────
 RUNNER=""

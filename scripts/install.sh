@@ -125,13 +125,31 @@ RUNNER=""
 if [[ "$(id -u)" == "0" ]]; then
     if ! id "$SVC_USER" >/dev/null 2>&1; then
         echo "▶ 创建运行用户 $SVC_USER"
-        useradd -r -s /usr/sbin/nologin -d "$INSTALL_ROOT" "$SVC_USER" || true
+        # ⚠️ home **不能**设成 $INSTALL_ROOT：那是 root 建的根目录，服务用户写不进去，
+        #    而 corepack / pnpm 一定要在 $HOME/.cache 下放缓存 ⇒ 会 EACCES。
+        #    这里给一个独立的、归它自己的 home。
+        useradd -r -s /usr/sbin/nologin -d "/var/lib/$SVC_USER" "$SVC_USER" || true
     fi
+
+    # 已存在的用户可能没有 home 或指向 /nonexistent，补一个可用的
+    SVC_HOME="$(getent passwd "$SVC_USER" | cut -d: -f6 || true)"
+    if [[ -z "$SVC_HOME" || "$SVC_HOME" == "/nonexistent" ]]; then
+        SVC_HOME="/var/lib/$SVC_USER"
+        usermod -d "$SVC_HOME" "$SVC_USER" 2>/dev/null || true
+    fi
+
+    # ⚠️ 关键一步：corepack / pnpm 会在 $HOME/.cache 下写缓存。
+    #    只 chown 应用目录是不够的 —— 这正是
+    #    "EACCES: mkdir '<home>/.cache/node/corepack/v1'" 的来源。
+    mkdir -p "$SVC_HOME/.cache"
+    chown -R "$SVC_USER":"$SVC_USER" "$SVC_HOME/.cache"
     chown -R "$SVC_USER":"$SVC_USER" "$REPO_ROOT"
+
+    # 显式传 HOME：避免 runuser / sudo 不改 HOME 时把缓存写进 root 家目录
     if command -v runuser >/dev/null 2>&1; then
-        RUNNER="runuser -u $SVC_USER --"
+        RUNNER="runuser -u $SVC_USER -- env HOME=$SVC_HOME"
     else
-        RUNNER="sudo -u $SVC_USER"
+        RUNNER="sudo -u $SVC_USER env HOME=$SVC_HOME"
     fi
 else
     echo "ℹ️ 非 root 运行：跳过建用户/改属主，用当前用户 $(id -un) 安装"
@@ -162,6 +180,12 @@ if [[ -f "$WS_FILE" ]]; then
 fi
 
 # ── ④ 装依赖 ───────────────────────────────────────────────────
+# corepack 以**服务用户**身份第一次跑 pnpm 时，会把 pnpm 本体下载到 $HOME/.cache。
+# 先单独跑一次，让"没网 / 缓存目录不可写"这类问题在这一步就明确暴露，
+# 而不是混在 install 的一大堆输出里。
+echo "▶ 预热 pnpm（corepack 首次以服务用户运行需联网下载 pnpm 本体）"
+$RUNNER pnpm --version
+
 echo "▶ pnpm install --frozen-lockfile（⚠️ 不加 --prod：构建需要 tsup / typescript）"
 $RUNNER pnpm install --frozen-lockfile
 

@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────
+# Docker 构建上下文忽略清单（modbus-slave）
+# ⚠️ 目的有二：
+#   ① 别把宿主机的 Windows 版 node_modules / 构建产物拷进 Linux 镜像（会直接跑不起来）
+#   ② 缩小上下文，加快构建
+# ─────────────────────────────────────────────────────────────
+
+# ── 依赖与构建产物：镜像内会重新生成 ──
+node_modules
+.next
+dist
+out
+build
+*.tsbuildinfo
+
+# ── ⚠️ 这个文件必须排除，否则镜像**构建不起来** ──
+# 它里面只有 allowBuilds、没有 packages 字段；pnpm 9 一见 workspace 文件就要求
+# packages，会直接报 "packages field missing or empty" 中断安装。
+# 而 allowBuilds 对 pnpm 9 本来就是多余的（pnpm 9 默认就执行依赖构建脚本，
+# "默认拒绝"是 pnpm 10 才引入的），所以容器里不需要它。
+# 宿主机上这个文件仍然有用，别删仓库里那份。
+pnpm-workspace.yaml
+
+# ── 版本控制与本地工具元数据 ──
+.git
+.gitignore
+.workbuddy
+.cozeproj
+.reasonix
+.codegraph
+.coze-logs
+
+# ── Docker 自身文件（改这些不必让镜像层缓存失效）──
+Dockerfile
+Dockerfile.*
+.dockerignore
+docker-compose*.yml
+
+# ── 本地环境变量与日志 ──
+.env
+.env.*
+*.log
+output.log
+logs
+
+# ── 编辑器 / 系统垃圾 ──
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# ⚠️ 以下**故意不排除**，动了会导致构建或运行失败：
+#   .npmrc        —— 指定了 registry.npmmirror.com，是构建提速的关键
+#   src/          —— ⚠️ 运行期必须要有！生产是用 tsx 现场执行 src/server.ts
+#   tsconfig.json —— ⚠️ 运行期必须要有！tsx 靠它的 paths 解析 @/* 别名
+#   next.config.ts—— 构建期需要，运行期 Next 也会读
+#   scripts/      —— 保留，便于在容器内用同一套脚本排查
+#
+# ⚠️ 注意：本应用**没有 public/ 目录**（不是遗漏），所以 Dockerfile 里不会 COPY public。

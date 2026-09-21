@@ -1,0 +1,52 @@
+# ═══════════════════════════════════════════════════════════════════════
+# ModBus Slave —— 本仓库自带的 docker compose（与 modbus-master 仓库分开）
+#
+#   首次启动：
+#     docker network create modbus-net 2>/dev/null || true
+#     docker compose up -d --build
+#   查看：  docker compose ps
+#   日志：  docker compose logs -f
+#   停止：  docker compose down
+#
+#   ⚠️ 两个仓库 = 两个**独立的 compose 项目**，靠一张**外部共享网络**互通。
+#      网络名固定为 modbus-net，两侧都声明 external: true。含义是：
+#        · 谁都不"拥有"这张网 ⇒ 任何一侧 down 都不会把它删掉；
+#        · 代价是必须先手工建一次（就是上面那行；已存在时无副作用）。
+#      ⇒ 所以**一定要先起从站、后起主站**：主站要能解析到 modbus-slave 这个名字。
+#
+#   ⚠️ 这里**没有 depends_on**。depends_on 只认同一个 compose 文件里的服务，
+#      跨仓库引用会直接报错（实测：compose 校验阶段就失败）。启动顺序请自己保证。
+#
+#   演示流程见 modbus-master 仓库的 docker-compose.yml 顶部说明。
+# ═══════════════════════════════════════════════════════════════════════
+
+name: modbus-slave
+
+services:
+  # 既提供管理界面，也监听 ModBus TCP 端口，对外当一个"真设备"
+  modbus-slave:
+    build:
+      context: .
+      # 想换 Node 版本：加 args: { NODE_VERSION: "22" }
+    image: modbus-slave:local
+    container_name: modbus-slave
+    init: true                 # 让 PID 1 能正确转发信号、回收僵尸进程
+    environment:
+      # ⚠️ 这三个变量在 Dockerfile 里已设。这里再写一遍是**故意的**：
+      #    compose 是"怎么跑"的最终事实来源，看这一个文件就够。
+      COZE_PROJECT_ENV: PROD   # 不设 = dev 模式，不报错但极慢
+      DEPLOY_RUN_PORT: "5001"
+      HOSTNAME: 0.0.0.0        # 不覆盖会被 Docker 塞成容器 ID
+    ports:
+      - "5001:5001"            # 管理界面 + /ws/slave
+      - "1502:1502"            # ModBus TCP（演示用非特权端口，主站界面里填这个）
+      # - "502:502"            # ModBus TCP 标准端口。要用就取消注释；
+      #                        宿主上该端口被占用或权限受限时可以不开。
+    networks:
+      - modbus-net
+    restart: unless-stopped
+
+networks:
+  modbus-net:
+    name: modbus-net
+    external: true

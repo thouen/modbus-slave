@@ -100,6 +100,20 @@ This project uses a single Agent (`编程专家`) responsible for full-stack dev
 5. **Document** — Update relevant docs if needed
 6. **Test what is testable** — 协议层与 reducer 的纯函数改动必须补 `src/**/__tests__` 用例
 
+## Docker / Container Deployment
+
+```bash
+docker network create modbus-net 2>/dev/null || true   # 与 modbus-master 仓库共用，只需建一次
+docker compose up -d --build                           # 起本仓库（从站）→ http://localhost:5001
+docker compose down
+```
+
+> 本仓库的 `docker-compose.yml` 与 [`modbus-master`](https://github.com/thouen/modbus-master) 仓库的那份**刻意分开**
+> （两个仓库 = 两个独立 compose 项目），靠一张**外部共享网络 `modbus-net`** 互通（两边都写 `external: true`）。
+> ⚠️ **先起本仓库（从站），再起主站**；**不要跨仓库写 `depends_on`**（compose 校验阶段直接报错）。
+> 主站界面里的 host 填 **`modbus-slave`**，就是这个服务名。
+> 完整说明与实测记录见本仓库 `docker-compose.yml` 顶部注释。
+
 ## Quality Checklist / 质量检查清单
 
 - [ ] TypeScript compiles with no errors

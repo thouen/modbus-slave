@@ -1,0 +1,4 @@
+# Shell 脚本必须保持 LF 换行。
+# 本机 core.autocrlf=true，不加这条的话 .sh 文件在 Windows 检出时会被换成 CRLF，
+# bash 执行会报 "bad interpreter"（\r 混进 shebang）。
+*.sh text eol=lf

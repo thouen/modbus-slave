@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useReducer, type ReactNode } from 'react';
 import {
+  DEFAULT_AREA_TOTAL_REGISTERS,
   MAX_READ_REGISTERS_PER_FRAME,
   bitAddressToBitIndex,
   bitAddressToRegister,
@@ -566,10 +567,10 @@ export function createDefaultSlave(): SlaveConfig {
       port: 502,
     },
     slaveId: 1,
-    coilCount: 1000,
-    discreteInputCount: 1000,
-    holdingRegisterCount: 1000,
-    inputRegisterCount: 1000,
+    coilCount: DEFAULT_AREA_TOTAL_REGISTERS,
+    discreteInputCount: DEFAULT_AREA_TOTAL_REGISTERS,
+    holdingRegisterCount: DEFAULT_AREA_TOTAL_REGISTERS,
+    inputRegisterCount: DEFAULT_AREA_TOTAL_REGISTERS,
     byteOrder32: 'ABCD',
     byteOrder64: 'ABCDEFGH',
   };

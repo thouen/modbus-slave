@@ -38,6 +38,17 @@ export function isWordArea(area: RegisterArea): boolean {
 export const BITS_PER_REGISTER = 16;
 
 /**
+ * 一个区在从站配置里声明的「总寄存器数量」默认值（下限 1）。
+ *
+ * ⭐ 与 master 的**同名同义**常量（`modbus-master/src/lib/modbus-types.ts`）刻意保持一致：
+ *    两端编辑弹窗的四个数量输入框都是"留空即回到这个值"。
+ * ⚠️ 语义上两端并不相同：master 侧它是**设备镜像数组的初始长度**（可自动扩容），
+ *    从站侧它是**该区真实内存的长度**（`Uint16Array` 长度，越界回 `0x02`）。
+ *    只共享"默认值 = 1000"这件事，不共享语义。
+ */
+export const DEFAULT_AREA_TOTAL_REGISTERS = 1000;
+
+/**
  * **协议**可写区域：线圈（FC05/15）/ 保持寄存器（FC06/16）。
  *
  * ⚠️ 这个谓词只描述"**主站能不能通过功能码改它**" —— 它**不等于**"界面上能不能改"。

@@ -307,11 +307,10 @@ export function SlavePanel() {
                   </span>
                 </div>
 
-                {/* 第 2 行：目标地址 · 单元号 */}
-                <div className="mt-1.5 flex items-center gap-2 pl-4 text-[10px] text-muted-foreground">
+                {/* 第 2 行：单元号 · 目标地址（与 master 列表**同形同序**） */}
+                <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground pl-4">
+                  <span>{t('slave')}:{slave.slaveId}</span>
                   <span className="truncate font-mono text-muted-foreground/80">{slaveTarget(slave)}</span>
-                  <span>·</span>
-                  <span>ID: {slave.slaveId}</span>
                 </div>
 
                 {/* 第 3 行：元信息（左） + 悬停操作（右） */}
@@ -476,7 +475,7 @@ function SlaveDialog({
     return { ...draft, slaveId: unitId };
   }, [editing, state.slaves]);
 
-  const [name, setName] = useState(editing?.name ?? defaults.name);
+  const [name, setName] = useState(editing?.name ?? '');
   const [protocol, setProtocol] = useState<Protocol>(editing?.protocol ?? defaults.protocol);
   const [mode, setMode] = useState<Mode>(editing?.mode ?? defaults.mode);
   const [slaveId, setSlaveId] = useState(editing?.slaveId ?? defaults.slaveId);
@@ -520,7 +519,7 @@ function SlaveDialog({
   const handleSave = () => {
     const config: SlaveConfig = {
       id: editing?.id ?? generateId(),
-      name,
+      name: name || `${t('slave')} ${state.slaves.length + 1}`,
       protocol,
       mode,
       slaveId,
@@ -557,11 +556,12 @@ function SlaveDialog({
         </DialogHeader>
         <div className="grid gap-3 py-2">
           <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">{t('slaveName')}</label>
+            <label className="text-xs text-muted-foreground">{t('name')}</label>
             <Input
               className="h-8 text-xs bg-background border-border"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              placeholder={t('slaveName')}
             />
           </div>
 

@@ -559,7 +559,7 @@ export function useAppState() {
 export function createDefaultSlave(): SlaveConfig {
   return {
     id: generateId(),
-    name: 'New Slave',
+    name: '',
     protocol: 'tcp',
     mode: 'rtu',
     tcpConfig: {

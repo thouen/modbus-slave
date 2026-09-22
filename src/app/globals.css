@@ -138,14 +138,22 @@
   --chart-5: #8B5CF6;
 }
 
-* {
-  border-color: var(--border);
-}
-
-body {
-  background-color: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
+/* ⚠️ 必须包在 @layer base 里：CSS 级联中「无层样式」优先级高于所有 @layer 内样式，
+   裸写 * { border-color: var(--border) } 会把项目里**全部**彩色边框工具类压成同一个灰边色
+   （border-primary / border-primary/60 / border-destructive / border-amber-* / border-transparent …）。
+   2026-09-22 实测症状：从站 tab 选中下划线、列表项选中描边整条失效，主站却正常 —— 差别就在这里。
+   主站同段见 modbus-master/src/app/globals.css。
+   ⚠️ 刻意用原生 CSS 而非 @apply：从站的 stylelint 实例会对 @apply 报
+   at-rule-prelude-no-invalid（主站依赖树里同一写法却不报，两端生效配置已比对为一致，属环境差异）。 */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
 }
 
 /* LED indicator glow */

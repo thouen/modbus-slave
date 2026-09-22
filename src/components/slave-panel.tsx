@@ -658,10 +658,10 @@ export function SlavePanel() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="ABCD">ABCD (Big Endian)</SelectItem>
-                        <SelectItem value="DCBA">DCBA (Little Endian)</SelectItem>
-                        <SelectItem value="BADC">BADC (Mid Big)</SelectItem>
-                        <SelectItem value="CDAB">CDAB (Mid Little)</SelectItem>
+                        <SelectItem value="ABCD">ABCD</SelectItem>
+                        <SelectItem value="DCBA">DCBA</SelectItem>
+                        <SelectItem value="BADC">BADC</SelectItem>
+                        <SelectItem value="CDAB">CDAB</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -675,10 +675,10 @@ export function SlavePanel() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="ABCDEFGH">ABCDEFGH (Big Endian)</SelectItem>
-                        <SelectItem value="HGFEDCBA">HGFEDCBA (Little Endian)</SelectItem>
-                        <SelectItem value="BADCFEHG">BADCFEHG (Mid Big)</SelectItem>
-                        <SelectItem value="GHEFCDAB">GHEFCDAB (Mid Little)</SelectItem>
+                        <SelectItem value="ABCDEFGH">ABCDEFGH</SelectItem>
+                        <SelectItem value="HGFEDCBA">HGFEDCBA</SelectItem>
+                        <SelectItem value="BADCFEHG">BADCFEHG</SelectItem>
+                        <SelectItem value="GHEFCDAB">GHEFCDAB</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

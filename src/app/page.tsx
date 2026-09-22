@@ -6,6 +6,7 @@ import { SlavePanel } from '@/components/slave-panel';
 import { RegisterViewer } from '@/components/register-viewer';
 import { LogViewer } from '@/components/log-viewer';
 import { Button } from '@/components/ui/button';
+import { APP_VERSION_LABEL } from '@/lib/version';
 import { Server } from 'lucide-react';
 
 function AppContent() {
@@ -25,6 +26,10 @@ function AppContent() {
               <Server className="w-3.5 h-3.5 text-primary" />
             </div>
             <h1 className="text-sm font-bold text-foreground tracking-wide">{t('appTitle')}</h1>
+            {/* 版本徽标：刻意不走 i18n（版本号与语言无关），文案源 = src/lib/version.ts */}
+            <span className="rounded border border-border px-1.5 py-px font-mono text-[10px] leading-4 text-muted-foreground">
+              {APP_VERSION_LABEL}
+            </span>
           </div>
           <span className="text-[10px] text-muted-foreground hidden sm:inline">{t('appSubtitle')}</span>
         </div>

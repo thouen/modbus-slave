@@ -26,11 +26,11 @@ import {
   encodeValueToRegisters,
   formatFitsAt,
   formatRegisterValue,
-  generateId,
   parseDisplayValue,
   registerWindowKey,
   resolveRegisterLayout,
 } from '@/lib/modbus-utils';
+import { createDefaultViewTab } from '@/lib/view-tab';
 import type { TranslationKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -98,10 +98,8 @@ const SOURCE_STYLE: Record<ValueSource, { key: 'sourceMaster' | 'sourceManual' |
   generator: { key: 'sourceGenerator', cls: 'bg-fuchsia-500/15 text-fuchsia-400' },
 };
 
-/** 生成默认标签名称：区域 @起始地址 */
-function generateTabName(areaLabel: string, startAddress: number): string {
-  return `${areaLabel} @${startAddress}`;
-}
+// 默认标签的构造（名称格式 / 区域 / 数量）已上移到 lib/view-tab，
+// 因为「手动新建」与「启动从站自动建」两个入口必须用同一份默认值。
 
 /** 格式化单个待写草稿值（16 位 / 位视图） */
 function formatDraftValue(value: number, format: DataDisplayFormat): string {
@@ -231,17 +229,9 @@ export function RegisterViewer() {
     const slaveId = activeSlaveId ?? slaves[0]?.id;
     const slave = slaves.find((s) => s.id === slaveId);
     if (!slave) return;
-    const area: RegisterArea = 'holdingRegisters';
-    const startAddress = 0;
-    const tab: RegisterViewTab = {
-      id: generateId(),
-      name: generateTabName(t('holdingRegisters'), startAddress),
-      slaveId: slave.id,
-      area,
-      startAddress,
-      registerCount: 20,
-      displayFormat: 'hex',
-    };
+    // ⭐ 默认值收口在 lib/view-tab —— 与 slave-panel「启动从站即开标签」共用同一份，
+    //    避免两处各自演化出不同的默认窗口。
+    const tab = createDefaultViewTab(slave.id, t('holdingRegisters'));
     dispatch({ type: 'ADD_VIEW_TAB', payload: tab });
     // 新标签尚未进入 state，直接用其配置发起一次读取
     readRegisters(tab.id, tab.slaveId, tab.area, tab.startAddress, tab.registerCount);

@@ -43,6 +43,7 @@ export const translations = {
 
     // Memory configuration
     // ⭐ Q17/Q19：字段名不变，但语义统一为「该区的**总寄存器数量**」（位区也按寄存器计）
+    memoryConfiguration: 'Memory Configuration',
     coilCount: 'Total Registers — Coils (FC01/05/15)',
     discreteInputCount: 'Total Registers — Discrete Inputs (FC02)',
     holdingRegisterCount: 'Total Registers — Holding Registers (FC03/06/16)',
@@ -204,6 +205,7 @@ export const translations = {
 
     // Memory configuration
     // ⭐ Q17/Q19：字段名不变，但语义统一为「该区的**总寄存器数量**」（位区也按寄存器计）
+    memoryConfiguration: '内存配置',
     coilCount: '线圈区总寄存器数量 (FC01/05/15)',
     discreteInputCount: '离散输入区总寄存器数量 (FC02)',
     holdingRegisterCount: '保持寄存器区总寄存器数量 (FC03/06/16)',

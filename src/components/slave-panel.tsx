@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppState, createDefaultSlave } from '@/hooks/use-app-state';
 import { useModbusWs } from '@/hooks/use-modbus-ws';
 import type { SlaveConfig, Protocol, Mode, ByteOrder32, ByteOrder64, RowNotes } from '@/lib/modbus-types';
 import { generateId } from '@/lib/modbus-utils';
+import { createDefaultViewTab } from '@/lib/view-tab';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -88,7 +89,15 @@ function slaveTarget(slave: SlaveConfig): string {
 export function SlavePanel() {
   const { t } = useI18n();
   const { state, dispatch } = useAppState();
-  const { startSlave, stopSlave, restartSlave } = useModbusWs();
+  const { startSlave, stopSlave, restartSlave, readRegisters } = useModbusWs();
+  /**
+   * 登记「本次由用户点启动、成功后要自动打开标签」的从站 id。
+   *
+   * ⚠️ 必须由**点击**登记，不能写成"看到 status 是 running 就开标签" ——
+   * 刷新页面时服务端快照（`slave_snapshot`）也会把 running 补回来，
+   * 那种情况下不该凭空刷出一堆标签。
+   */
+  const pendingAutoTabRef = useRef<Set<string>>(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSlave, setEditingSlave] = useState<SlaveConfig | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -96,14 +105,52 @@ export function SlavePanel() {
   const [deleteTarget, setDeleteTarget] = useState<SlaveConfig | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * 启动 / 停止。
+   * ⭐ 启动会登记「成功后自动开标签」：从站真正起来后再切到绑定它的标签。
+   */
   const handleToggle = (slave: SlaveConfig) => {
     const status = state.slaveStatus[slave.id];
     if (status === 'running') {
       stopSlave(slave.id);
     } else {
+      pendingAutoTabRef.current.add(slave.id);
       startSlave(slave.id, slave);
     }
   };
+
+  /**
+   * 从站启动成功（status 转 `running`）→ 打开一个**绑定该实例**的标签。
+   *
+   * ⭐ 触发时机选在 running 之后、而不是点击瞬间：从站要先 listen 成功才算真的起来，
+   *   点击那一刻读会撞上还没起来的从站。
+   * ⭐ 已有绑定该从站的标签 ⇒ 切过去并刷新一次；一个都没有 ⇒ 新建（默认保持寄存器区）。
+   */
+  useEffect(() => {
+    const pending = pendingAutoTabRef.current;
+    if (pending.size === 0) return;
+
+    for (const slaveId of [...pending]) {
+      if (state.slaveStatus[slaveId] !== 'running') continue;
+      pending.delete(slaveId);
+
+      const existing = state.viewTabs.find((tab) => tab.slaveId === slaveId);
+      if (existing) {
+        dispatch({ type: 'SET_ACTIVE_VIEW_TAB', payload: existing.id });
+        dispatch({ type: 'SET_ACTIVE_SLAVE', payload: slaveId });
+        readRegisters(
+          existing.id, existing.slaveId, existing.area, existing.startAddress, existing.registerCount,
+        );
+        continue;
+      }
+      if (!state.slaves.some((s) => s.id === slaveId)) continue;
+
+      const tab = createDefaultViewTab(slaveId, t('holdingRegisters'));
+      dispatch({ type: 'ADD_VIEW_TAB', payload: tab });
+      // 新标签尚未进入 state，直接用其配置发起一次读取
+      readRegisters(tab.id, tab.slaveId, tab.area, tab.startAddress, tab.registerCount);
+    }
+  }, [state.slaveStatus, state.viewTabs, state.slaves, dispatch, readRegisters, t]);
 
   const handleNew = () => {
     const draft = createDefaultSlave();
@@ -295,7 +342,12 @@ export function SlavePanel() {
                         size="sm"
                         variant="ghost"
                         className="h-5 px-1.5 text-[9px] text-amber-400"
-                        onClick={(e) => { e.stopPropagation(); restartSlave(slave.id, slave); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // 重启也是"启动从站实例"，同样登记自动开标签
+                          pendingAutoTabRef.current.add(slave.id);
+                          restartSlave(slave.id, slave);
+                        }}
                         title={t('restartSlave')}
                       >
                         <RefreshCw className="w-3 h-3" />
@@ -529,7 +581,7 @@ export function SlavePanel() {
               </div>
 
               <div className="col-span-2 border-t border-border pt-3 mt-1">
-                <div className="text-xs font-medium text-foreground mb-2">Memory Configuration</div>
+                <div className="text-xs font-medium text-foreground mb-2">{t('memoryConfiguration')}</div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs">{t('coilCount')}</Label>
@@ -654,7 +706,7 @@ export function SlavePanel() {
           <AlertDialogHeader>
             <AlertDialogTitle className="text-sm">{t('deleteSlave')}</AlertDialogTitle>
             <AlertDialogDescription className="text-xs">
-              {deleteTarget ? `Are you sure you want to delete "${deleteTarget.name}"?` : ''}
+              {deleteTarget ? `${t('deleteSlave')} "${deleteTarget.name}"？` : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

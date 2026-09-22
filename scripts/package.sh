@@ -51,5 +51,5 @@ echo "   体积：$(du -h "$OUT" | cut -f1)"
 echo
 echo "下一步（在目标 Linux 上）："
 echo "  sudo mkdir -p /opt/modbus-simulator"
-echo "  sudo tar -xzf $(basename "$OUT") -C /opt/modbus-simulator"
+echo "  sudo tar -xzf dist-pkg/$(basename "$OUT") -C /opt/modbus-simulator"
 echo "  sudo /opt/modbus-simulator/${APP_NAME}/scripts/install.sh"

@@ -417,9 +417,29 @@ export function parseDisplayValue(value: string, format: DataDisplayFormat): num
 
 /**
  * Generate a random ID string
+ *
+ * ⚠️ `crypto.randomUUID()` 只在「安全上下文」里存在 —— 即 HTTPS，或 localhost / 127.0.0.1。
+ * 经 frp / 内网穿透用 `http://IP:端口` 访问时属于非安全上下文，该方法会**整个消失**，
+ * 症状正是「点击加号 / 保存没有任何反应」，控制台报 `crypto.randomUUID is not a function`。
+ * 所以这里按 randomUUID → getRandomValues → Math.random 逐级降级。
  */
 export function generateId(): string {
-  return crypto.randomUUID();
+  const webCrypto = typeof crypto === 'undefined' ? undefined : crypto;
+
+  if (webCrypto && typeof webCrypto.randomUUID === 'function') {
+    return webCrypto.randomUUID();
+  }
+
+  // getRandomValues 不受安全上下文限制，非 HTTPS 下照样可用
+  if (webCrypto && typeof webCrypto.getRandomValues === 'function') {
+    const bytes = webCrypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // UUID v4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
+    const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /**

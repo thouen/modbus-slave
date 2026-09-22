@@ -306,3 +306,44 @@ describe('registerWindowKey（窗口身份）', () => {
     assert.equal(registerWindowKey({ ...tab }), registerWindowKey({ ...tab, displayFormat: 'hex' }));
   });
 });
+
+// ⚠️ 这组用例锁住 2026-09-22 修的那个 bug：经 frp / 内网穿透用 `http://IP:端口` 打开页面时，
+// 浏览器判定为**非安全上下文**，`crypto.randomUUID` 会整个消失（不是报错，是方法不存在）
+// ⇒ 点「加号新建从站」没反应。别再把 generateId 改回裸调 `crypto.randomUUID()`。
+describe('generateId（非安全上下文降级）', () => {
+  const originCrypto = globalThis.crypto;
+
+  function stubCrypto(stub: Crypto | undefined) {
+    Object.defineProperty(globalThis, 'crypto', {
+      value: stub,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it('有 randomUUID 时正常走它（HTTPS / localhost）', () => {
+    stubCrypto(originCrypto);
+    assert.match(generateId(), UUID_V4);
+  });
+
+  it('没有 randomUUID 时降级到 getRandomValues，仍是合法 UUID v4', () => {
+    stubCrypto({ getRandomValues: originCrypto.getRandomValues.bind(originCrypto) } as unknown as Crypto);
+    try {
+      assert.match(generateId(), UUID_V4);
+    } finally {
+      stubCrypto(originCrypto);
+    }
+  });
+
+  it('连 crypto 都不存在时也不抛错（兜底分支）', () => {
+    stubCrypto(undefined);
+    try {
+      const id = generateId();
+      assert.ok(typeof id === 'string' && id.length > 0);
+    } finally {
+      stubCrypto(originCrypto);
+    }
+  });
+});

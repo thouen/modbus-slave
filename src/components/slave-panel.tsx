@@ -420,7 +420,7 @@ export function SlavePanel() {
                     setEditingSlave(newSlave);
                   }}
                 >
-                  <SelectTrigger className="mt-1 h-8">
+                  <SelectTrigger className="mt-1 h-8 w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -437,7 +437,7 @@ export function SlavePanel() {
                     value={editingSlave.mode}
                     onValueChange={(v: Mode) => setEditingSlave({ ...editingSlave, mode: v })}
                   >
-                    <SelectTrigger className="mt-1 h-8">
+                    <SelectTrigger className="mt-1 h-8 w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -499,7 +499,7 @@ export function SlavePanel() {
                         serialConfig: { ...editingSlave.serialConfig!, baudRate: parseInt(v) || 9600 },
                       })}
                     >
-                      <SelectTrigger className="mt-1 h-8">
+                      <SelectTrigger className="mt-1 h-8 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -518,7 +518,7 @@ export function SlavePanel() {
                         serialConfig: { ...editingSlave.serialConfig!, dataBits: (parseInt(v) || 8) as 7 | 8 },
                       })}
                     >
-                      <SelectTrigger className="mt-1 h-8">
+                      <SelectTrigger className="mt-1 h-8 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -536,7 +536,7 @@ export function SlavePanel() {
                         serialConfig: { ...editingSlave.serialConfig!, stopBits: (parseInt(v) || 1) as 1 | 2 },
                       })}
                     >
-                      <SelectTrigger className="mt-1 h-8">
+                      <SelectTrigger className="mt-1 h-8 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -554,7 +554,7 @@ export function SlavePanel() {
                         serialConfig: { ...editingSlave.serialConfig!, parity: v },
                       })}
                     >
-                      <SelectTrigger className="mt-1 h-8">
+                      <SelectTrigger className="mt-1 h-8 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -654,7 +654,7 @@ export function SlavePanel() {
                       value={editingSlave.byteOrder32}
                       onValueChange={(v: ByteOrder32) => setEditingSlave({ ...editingSlave, byteOrder32: v })}
                     >
-                      <SelectTrigger className="mt-1 h-8">
+                      <SelectTrigger className="mt-1 h-8 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -671,7 +671,7 @@ export function SlavePanel() {
                       value={editingSlave.byteOrder64}
                       onValueChange={(v: ByteOrder64) => setEditingSlave({ ...editingSlave, byteOrder64: v })}
                     >
-                      <SelectTrigger className="mt-1 h-8">
+                      <SelectTrigger className="mt-1 h-8 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>

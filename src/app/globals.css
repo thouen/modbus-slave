@@ -50,6 +50,10 @@
   --color-surface-container-high: var(--surface-container-high);
   --color-surface-container-highest: var(--surface-container-highest);
 
+  /* 列表项（连接 / 从站实例卡片）非选中底色 + 悬停底色 —— 两端共用 */
+  --color-surface-list: var(--surface-list);
+  --color-surface-list-hover: var(--surface-list-hover);
+
   /* Prototype: status & data colors */
   --color-success: var(--success);
   --color-warning: var(--warning);
@@ -101,6 +105,12 @@
   --surface-container-high: #1A2438;
   --surface-container-highest: #222E44;
   --surface-container-lowest: #070B14;
+
+  /* 列表项（连接 / 从站实例卡片）非选中底色 + 悬停底色 —— 两端共用。
+     ⚠️ 必须比 --surface-container 更暗：选中态底色是 bg-primary/[0.06]（≈#10192B 叠在页面底上），
+     若非选中底色比它更亮，选中就变成"变暗"，高亮反而看不出来。 */
+  --surface-list: #0d1117;
+  --surface-list-hover: #111722;
 
   /* Status & data */
   --success: #22C55E;

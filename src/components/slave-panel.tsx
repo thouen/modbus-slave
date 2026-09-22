@@ -291,7 +291,7 @@ export function SlavePanel() {
                 className={`group rounded-md border p-2 cursor-pointer transition-all ${
                   isActive
                     ? 'border-primary/60 bg-primary/[0.06] ring-1 ring-primary/30'
-                    : 'border-border/60 bg-card hover:border-border hover:bg-card/80'
+                    : 'border-border/60 hover:border-border bg-surface-list hover:bg-surface-list-hover'
                 }`}
                 onClick={() => dispatch({ type: 'SET_ACTIVE_SLAVE', payload: slave.id })}
               >

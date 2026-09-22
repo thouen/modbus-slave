@@ -87,7 +87,7 @@ function StatusBar({ runningCount, totalSlaves, totalLogs }: { runningCount: num
       </div>
       <div className="flex items-center gap-2">
         <span>ModBus TCP/Serial</span>
-        <span>RTU/ASCII</span>
+        <span>ASCII/RTU</span>
       </div>
     </footer>
   );

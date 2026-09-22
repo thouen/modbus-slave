@@ -18,6 +18,7 @@
 #      跨仓库引用会直接报错（实测：compose 校验阶段就失败）。启动顺序请自己保证。
 #
 #   演示流程见 modbus-master 仓库的 docker-compose.yml 顶部说明。
+#   从裸机 supervisor 迁移过来的完整步骤见 DEPLOY.md §9.8。
 # ═══════════════════════════════════════════════════════════════════════
 
 name: modbus-slave
@@ -39,9 +40,17 @@ services:
       HOSTNAME: 0.0.0.0        # 不覆盖会被 Docker 塞成容器 ID
     ports:
       - "5001:5001"            # 管理界面 + /ws/slave
-      - "1502:1502"            # ModBus TCP（演示用非特权端口，主站界面里填这个）
-      # - "502:502"            # ModBus TCP 标准端口。要用就取消注释；
-      #                        宿主上该端口被占用或权限受限时可以不开。
+      - "502:502"              # ModBus TCP 标准端口（界面里从站用默认 502 时走这条）
+      - "1502:1502"            # 备用：界面里从站端口填 1502 时走这条
+      #
+      # ── 关于 502 特权端口 ──────────────────────────────────────────
+      # 容器里**不存在**特权端口问题：容器内 net.ipv4.ip_unprivileged_port_start=0，
+      # 且本镜像没写 USER 指令（以 root 跑）⇒ 容器内绑 502 不需要任何授权。
+      # 宿主侧 502 由 dockerd / docker-proxy 绑定，它也是 root ⇒ 同样不需要
+      # setcap / sysctl。所以 §3.3 那一整套在 docker 下**全都不需要**。
+      #
+      # ⚠️ 宿主 502 若已被别的程序占用，`up` 会报 bind: address already in use。
+      #    排查：ss -lntp | grep 502
       #
       # ⚠️ 在界面上开的**每一个**从站端口，只要想从容器外访问，这里就得有一行。
       #    容器内绑任意端口都可以（含 502），但"对外可见"必须靠 ports 发布。
@@ -55,6 +64,12 @@ services:
     networks:
       - modbus-net
     restart: unless-stopped
+    stop_grace_period: 20s     # 从站可能挂着真实设备的连接，别被硬杀
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"        # 不设上限会一直涨，长期跑必炸磁盘
+        max-file: "3"
 
 networks:
   modbus-net:
